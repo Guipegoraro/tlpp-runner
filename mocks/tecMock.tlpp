@@ -1,0 +1,203 @@
+#include "tlpp-core.th"
+
+//------------------------------------------------------------------------------
+// API friendly para testes configurarem mocks dos wrappers em src/tecWrap.tlpp.
+//
+// Uso tipico em teste PROBAT:
+//
+//   #include "tlpp-core.th"
+//   #include "tlpp-probat.th"
+//   using namespace tlpp.probat
+//
+//   @TestFixture()
+//   user function test_busca_cliente_existente()
+//       u_tecTstStart()
+//       u_tecMkBdSeed("SA1", { ;
+//           u_tecMkRow({{"A1_CGC", "12345"}, {"A1_NOME", "ACME"}}) ;
+//       })
+//       assertEquals(u_tecBuscaCli("12345"), "ACME")
+//       u_tecTstStop()
+//   return .T.
+//------------------------------------------------------------------------------
+
+user function tecMkBdSeed(cAlias as character, aRows as array)
+    local jMock
+
+    DEFAULT cAlias := ""
+
+    jMock := u_tecWMockBd()
+    if jMock == nil
+        return .F.  // u_tecTstStart() nao foi chamado
+    endif
+
+    jMock[cAlias] := aRows
+return .T.
+
+// Mocka resultado de u_tecDbSeekFld(cAlias, nOrder, cKey, _). jRow eh
+// JsonObject com todos os campos que o teste vai consultar (criado via
+// u_tecMkRow). Match e por chave composta exata.
+//
+//   u_tecMkBdSeek("SA1", 3, "0111111111000111", ;
+//       u_tecMkRow({{"A1_NOME", "ACME"}, {"A1_TEL", "1234"}}))
+user function tecMkBdSeek(cAlias as character, nOrder as numeric, cKey as character, jRow)
+    local jMock, cMockKey
+
+    DEFAULT cAlias := ""
+    DEFAULT nOrder := 1
+    DEFAULT cKey   := ""
+
+    jMock := u_tecWMockBd()
+    if jMock == nil
+        return .F.
+    endif
+
+    cMockKey := cAlias + "#" + cValToChar(nOrder) + "#" + AllTrim(cKey)
+    jMock[cMockKey] := jRow
+return .T.
+
+// Mocka u_tecGetMv. cTipo (opcional) valida o tipo do valor contra o X6_TIPO
+// esperado do parametro ("C"/"N"/"L"/"D") - mock com tipo errado e rejeitado
+// (.F., nao registra), evitando teste verde com parametro que em prod viria
+// com outro tipo. Sem cTipo, comporta como sempre (aceita qualquer valor).
+//
+//   u_tecMkMv("MV_ESTADO", "SP", "C")     // ok
+//   u_tecMkMv("MV_JUROS", "1.5", "N")     // .F. - string onde X6_TIPO e N
+user function tecMkMv(cParam as character, xValor, cTipo as character)
+    local jMock
+
+    DEFAULT cParam := ""
+    DEFAULT cTipo  := ""
+
+    if !Empty(cTipo) .and. ValType(xValor) != Upper(AllTrim(cTipo))
+        Conout("[tecMkMv] REJEITADO " + cParam + ": esperava tipo " + Upper(AllTrim(cTipo)) + " recebeu " + ValType(xValor))
+        return .F.
+    endif
+
+    jMock := u_tecWMockMv()
+    if jMock == nil
+        return .F.
+    endif
+    jMock[cParam] := xValor
+return .T.
+
+// Mocka resposta de u_tecQryFirst/QryAll para um cSql especifico.
+// aRows: array de JsonObject (use u_tecMkRow para construir cada linha).
+//
+//   u_tecMkSql("SELECT NOME FROM SA1 WHERE COD='001'", { ;
+//       u_tecMkRow({{"NOME", "ACME"}}) ;
+//   })
+user function tecMkSql(cSql as character, aRows as array)
+    local jMock
+
+    DEFAULT cSql  := ""
+    DEFAULT aRows := {}
+
+    jMock := u_tecWMockSql()
+    if jMock == nil
+        return .F.
+    endif
+    jMock[cSql] := aRows
+return .T.
+
+// Mocka resposta HTTP. cUrl pode ser:
+//   - URL pura  ("/api/x")           -> casa qualquer verb
+//   - "VERB URL" ("GET /api/x")        -> casa apenas esse verb
+// Permite mockar GET e POST da mesma URL com respostas diferentes:
+//   u_tecMkHttp("GET /api/x", 200, '...')
+//   u_tecMkHttp("POST /api/x", 201, '...')
+user function tecMkHttp(cUrl as character, nStatus as numeric, cBody as character)
+    local jMock, jResp
+
+    DEFAULT cUrl    := ""
+    DEFAULT nStatus := 200
+    DEFAULT cBody   := ""
+
+    jMock := u_tecWMockHttp()
+    if jMock == nil
+        return .F.
+    endif
+
+    jResp := JsonObject():new()
+    jResp["status"] := nStatus
+    jResp["body"]   := cBody
+
+    jMock[cUrl] := jResp
+return .T.
+
+user function tecMkHoje(dData as date)
+return u_tecWSetHoje(dData)
+
+user function tecMkHora(cHora as character)
+return u_tecWSetHora(cHora)
+
+//------------------------------------------------------------------------------
+// u_tecTstWith({|| <bloco> }) - executa bloco entre tecTstStart e tecTstStop,
+// garantindo que Stop seja chamado MESMO se bloco causar exception.
+//
+// Util pra evitar vazamento de estado entre testes - se um assert no meio do
+// bloco der raise/throw e o teste esquecer de chamar Stop, o proximo teste
+// herda jMockBd/jMockHttp/etc do anterior.
+//
+// Uso:
+//   @TestFixture()
+//   user function test_x()
+//       u_tecAssertReset()
+//       u_tecTstWith({|| ;
+//           u_tecMkSql("SELECT...", { u_tecMkRow({{"N", "X"}}) }), ;
+//           u_tecAssertEq("...", "X", u_tecQryFirst("SELECT...")["N"]) ;
+//       })
+//   return u_tecAssertsOk()
+//
+// Retorna o que o bloco retornou, ou nil se exception. Exception no bloco
+// REGISTRA UMA FALHA (u_tecAssertFail) - senao o teste terminaria verde com os
+// asserts que rodaram antes do crash.
+//------------------------------------------------------------------------------
+user function tecTstWith(bBlock as codeblock)
+    local xRet := nil
+    local bOldErr
+    local oErr := nil
+    local cDet := "sem detalhe do erro"
+
+    u_tecTstStart()
+
+    // ErrorBlock + BEGIN SEQUENCE: forca handler a disparar BREAK quando
+    // exception ocorrer, ai RECOVER captura. Sem isso, exception implicita
+    // (ex. acesso a metodo de nil) escapa o BEGIN SEQUENCE.
+    bOldErr := ErrorBlock({|oErr| Break(oErr)})
+
+    BEGIN SEQUENCE
+        xRet := Eval(bBlock)
+    RECOVER USING oErr
+        if ValType(oErr) == "C"
+            cDet := oErr
+        elseif ValType(oErr) == "O" .and. ValType(oErr:Description) == "C"
+            cDet := AllTrim(oErr:Description)
+        endif
+        Conout("[tecTstWith] excecao capturada no bloco: " + cDet)
+        // Falha explicita: exception no bloco NUNCA pode virar teste verde
+        u_tecAssertFail("exception no bloco de teste", cDet)
+    END SEQUENCE
+
+    ErrorBlock(bOldErr)
+    u_tecTstStop()
+return xRet
+
+//------------------------------------------------------------------------------
+// Helper para construir 1 linha de mock a partir de array {{campo,valor}, ...}
+//
+// Exemplo:
+//   u_tecMkBdSeed("SA1", { ;
+//       u_tecMkRow({{"A1_CGC", "11111"}, {"A1_NOME", "CLI A"}}), ;
+//       u_tecMkRow({{"A1_CGC", "22222"}, {"A1_NOME", "CLI B"}})  ;
+//   })
+//------------------------------------------------------------------------------
+user function tecMkRow(aFlds as array)
+    local jRow := JsonObject():new()
+    local i
+
+    DEFAULT aFlds := {}
+
+    for i := 1 to Len(aFlds)
+        jRow[aFlds[i][1]] := aFlds[i][2]
+    next i
+return jRow

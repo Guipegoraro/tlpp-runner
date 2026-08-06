@@ -1,0 +1,36 @@
+#include "tlpp-core.th"
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecCalcDsc
+Calcula valor liquido com desconto progressivo.
+
+Regras:
+   - Ate 100.00: sem desconto
+   - 100.01 a 500.00: 5%
+   - Acima de 500.00: 10%
+
+@param nValor - valor original (numeric)
+@return numerico - valor liquido apos desconto
+
+@author tlpp-runner
+@since  2026-05-10
+
+Exemplo de chamada via /runner/exec:
+   POST /runner/exec  body: {"function":"u_tecCalcDsc","argString":"150"}
+/*/
+//------------------------------------------------------------------------------
+user function tecCalcDsc(nValor as numeric) as numeric
+    local nPct := 0 as numeric
+
+    DEFAULT nValor := 0
+
+    do case
+        case nValor <= 100
+            nPct := 0
+        case nValor <= 500
+            nPct := 0.05
+        otherwise
+            nPct := 0.10
+    endcase
+
+return nValor * (1 - nPct)

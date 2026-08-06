@@ -1,0 +1,68 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+#include "topconn.ch"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Teste de integracao u_tecCalcCmsn - usa banco real Z_TST_CLIENTE.
+//
+// IMPORTANTE: u_tecCalcCmsn em prod usa u_tecDbSeekFld("SA1", ...) que faz
+// DbSelectArea("SA1"). Como nao temos SA1 ativo no env DESENVOLVIMENTO,
+// este teste demonstra a abordagem alternativa:
+//
+//   1. Cria tabela Z_TST_SA1_LIKE com mesmos campos de SA1
+//   2. Faz INSERT real
+//   3. Demonstra que a funcao DEPENDE de SA1 estar acessivel
+//
+// Pra teste REAL de comissao com banco, voce precisaria de SA1 no env
+// ou refatorar a funcao pra receber alias parametrizavel.
+//
+// Pra esta demo: foco em mostrar o fluxo TDD com banco real, nao testar
+// comissao em SA1 de fato.
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_calcCmsn_itg_z_tst_sa1_seed()
+    local nLink, nLinkAnt, jRow
+    local cTab := "Z_TST_SA1"
+
+    u_tecAssertReset()
+    nLink := u_tecTstConn(@nLinkAnt)
+    if nLink <= 0
+        u_tecAssertTrue("conectou PROTHEUS_TST", .F.)
+        return u_tecAssertsOk()
+    endif
+
+    // Setup: tabela espelho de SA1 (subset dos campos)
+    u_tecTstDropTable(cTab)
+    u_tecTstCreateTable(cTab, { ;
+        {"A1_FILIAL", "CHAR(2)",  "NOT NULL DEFAULT '01'"}, ;
+        {"A1_COD",    "CHAR(6)",  "NOT NULL"}, ;
+        {"A1_LOJA",   "CHAR(2)",  "NOT NULL"}, ;
+        {"A1_GRPVEN", "CHAR(6)",  "NULL"} ;
+    })
+
+    // Seed: 1 cliente VIP, 1 padrao
+    u_tecAssertTrue("seed cli VIP", ;
+        u_tecTstSeed(cTab, {{"A1_FILIAL","01"},{"A1_COD","000010"},{"A1_LOJA","01"},{"A1_GRPVEN","VIP"}}))
+    u_tecAssertTrue("seed cli padrao", ;
+        u_tecTstSeed(cTab, {{"A1_FILIAL","01"},{"A1_COD","000020"},{"A1_LOJA","01"},{"A1_GRPVEN","PADRAO"}}))
+
+    // Verifica via SQL direto (demonstra que dados foram gravados)
+    jRow := u_tecQryFirst("SELECT A1_GRPVEN FROM " + cTab + " WHERE A1_COD='000010'")
+    u_tecAssertNotEmpty("row VIP lida", jRow)
+    if jRow != nil
+        u_tecAssertEq("grupo VIP", "VIP", AllTrim(jRow["A1_GRPVEN"]))
+    endif
+
+    jRow := u_tecQryFirst("SELECT A1_GRPVEN FROM " + cTab + " WHERE A1_COD='000020'")
+    u_tecAssertNotEmpty("row padrao lida", jRow)
+    if jRow != nil
+        u_tecAssertEq("grupo PADRAO", "PADRAO", AllTrim(jRow["A1_GRPVEN"]))
+    endif
+
+    // Cleanup
+    u_tecTstDropTable(cTab)
+    u_tecTstDisconn(nLink, nLinkAnt)
+return u_tecAssertsOk()

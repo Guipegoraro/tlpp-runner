@@ -1,0 +1,123 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes do helper u_tecTstWith (issue #6) - garante que tecTstStop seja
+// chamado mesmo se o bloco causar exception.
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_tstWith_caminho_feliz()
+    local xRet
+
+    u_tecAssertReset()
+
+    xRet := u_tecTstWith({|| ;
+        u_tecMkSql("Q1", { u_tecMkRow({{"N", "OK"}}) }), ;
+        u_tecQryFirst("Q1")["N"] ;
+    })
+
+    u_tecAssertEq("retorno do bloco", "OK", xRet)
+    u_tecAssertFalse("modo teste deve estar OFF apos with", u_tecTstAtivo())
+return u_tecAssertsOk()
+
+static function tstForcaErroRuntime()
+    local xNil := nil
+    // Acesso a metodo de nil -> erro runtime capturavel por BEGIN SEQUENCE
+return xNil:naoExisteEsseMetodo()
+
+@TestFixture()
+user function test_tstWith_garante_teardown_mesmo_apos_excecao()
+    local xRet, jSum
+    local lAtivo  := .T.
+    local nFalhas := 0
+
+    u_tecAssertReset()
+
+    xRet := u_tecTstWith({|| ;
+        u_tecMkSql("ABC", { u_tecMkRow({{"N", 1}}) }), ;
+        tstForcaErroRuntime() ;
+    })
+
+    // Observa o estado ANTES de zerar - o tecTstWith registra falha proposital
+    lAtivo  := u_tecTstAtivo()
+    jSum    := u_tecAssertSummary()
+    nFalhas := jSum["failed"]
+
+    // Zera os contadores sujos do cenario observado antes de assertar
+    u_tecAssertReset()
+
+    // Mesmo com exception no meio, Stop foi chamado
+    u_tecAssertFalse("modo teste OFF apos exception", lAtivo)
+    u_tecAssertTrue("xRet deve ser nil (exception)", xRet == nil)
+    u_tecAssertEq("tecTstWith registra 1 falha pela exception", 1, nFalhas)
+return u_tecAssertsOk()
+
+//------------------------------------------------------------------------------
+// Exception no bloco NAO pode virar teste verde. Antes do fix, o RECOVER do
+// tecTstWith so fazia Conout: os asserts que rodaram ANTES do crash contavam
+// como ok e u_tecAssertsOk() devolvia .T..
+//------------------------------------------------------------------------------
+@TestFixture()
+user function test_tstWith_excecao_nao_vira_teste_verde()
+    local jSum
+    local nFalhas := 0
+    local nOks    := 0
+    local lVerde  := .T.
+
+    u_tecAssertReset()
+
+    // Cenario observado: 1 assert que PASSA e em seguida um crash.
+    u_tecTstWith({|| ;
+        u_tecAssertTrue("assert que passa antes do crash", .T.), ;
+        tstForcaErroRuntime() ;
+    })
+
+    jSum    := u_tecAssertSummary()
+    nOks    := jSum["passed"]
+    nFalhas := jSum["failed"]
+    lVerde  := u_tecAssertsOk()
+
+    u_tecAssertReset()
+
+    u_tecAssertEq("o assert bom do cenario contou como ok", 1, nOks)
+    u_tecAssertGreater("exception registrou falha", 0, nFalhas)
+    u_tecAssertFalse("cenario com exception NAO pode terminar verde", lVerde)
+return u_tecAssertsOk()
+
+//------------------------------------------------------------------------------
+// Helper do E2E de higiene do /runner/exec (modo teste vazando entre requests
+// na mesma thread do AppServer). NAO e @TestFixture - e chamado direto via
+// /runner/exec em sequencia:
+//   1) u_tecVazaModo -> liga modo teste e NAO chama Stop (simula teste que
+//      estourou antes do teardown)
+//   2) u_tecTstAtivo -> deve responder .F., porque tecRunrExec limpa o modo
+//      teste no inicio de cada request
+//------------------------------------------------------------------------------
+user function tecVazaModo()
+    u_tecTstStart()
+    u_tecMkMv("MV_VAZOU", "SIM", "C")
+return u_tecTstAtivo()
+
+@TestFixture()
+user function test_tstWith_estado_nao_vaza_entre_blocos()
+    local xPrimeiro, xSegundo
+
+    u_tecAssertReset()
+
+    xPrimeiro := u_tecTstWith({|| ;
+        u_tecMkSql("Q", { u_tecMkRow({{"V", "primeiro"}}) }), ;
+        u_tecQryFirst("Q")["V"] ;
+    })
+
+    // Segundo bloco: sem mockar a SQL "Q". Como Stop foi chamado no anterior,
+    // jMockSql foi limpo. u_tecQryFirst("Q") deve retornar nil.
+    xSegundo := u_tecTstWith({|| ;
+        u_tecQryFirst("Q") ;
+    })
+
+    u_tecAssertEq("primeiro vem do mock", "primeiro", xPrimeiro)
+    u_tecAssertTrue("segundo deve ser nil (mock limpo)", xSegundo == nil)
+return u_tecAssertsOk()

@@ -1,0 +1,137 @@
+#include "tlpp-core.th"
+
+//------------------------------------------------------------------------------
+// Mock de FwFormModel (issue #15) - duble do oModel que funcoes de validacao
+// e gatilhos de ModelDef recebem. Permite testar regra de negocio MVC sem
+// Activate real, sem FwViewDef, sem tela e sem banco.
+//
+// API minima coberta (mesmas assinaturas do FwFormModel onde aplicavel):
+//   :Activate() / :DeActivate() / :IsActive()
+//   :SetValue(cSubmodel, cCampo, xValor) / :GetValue(cSubmodel, cCampo)
+//   :GetModel(cSubmodel) -> submodel com :GetValue(cCampo)/:SetValue(cCampo, x)
+//   :VldData()          -> .T. por default; custom via :SetVldBlock({|oM| ...})
+//   :FormCommit()       -> NO-OP (nao toca banco); :WasCommitted() pra assert
+//
+// Uso tipico em teste:
+//
+//   oMdl := u_tecMkModel("MEUMVC")
+//   oMdl:Activate()
+//   oMdl:SetValue("SC5MASTER", "C5_CLIENTE", "000001")
+//   u_tecAssertTrue("regra aceita", u_MinhaVldPedido(oMdl))
+//
+// Limites conscientes: nao simula grid multi-linha (GetLine/SetLine/AddLine),
+// nao le SX3 (GetValue de campo nunca setado devolve nil, nao o default do
+// dicionario) e nao dispara bPre/bPost reais - a regra sob teste e chamada
+// direto pela sua funcao, com o mock no lugar do oModel.
+//------------------------------------------------------------------------------
+
+// Submodel: enxerga a MESMA secao de storage do pai (JsonObject por referencia)
+class TecSubMdlMock
+    public data jFields
+
+    public method new(jFields) constructor
+    public method GetValue(cFld)
+    public method SetValue(cFld, xVal)
+endclass
+
+method new(jFields) class TecSubMdlMock
+    ::jFields := jFields
+return self
+
+method GetValue(cFld) class TecSubMdlMock
+    if ::jFields != nil .and. ::jFields:hasProperty(cFld)
+        return ::jFields[cFld]
+    endif
+return nil
+
+method SetValue(cFld, xVal) class TecSubMdlMock
+    ::jFields[cFld] := xVal
+return .T.
+
+// Modelo principal
+class TecModelMock
+    public data cId
+    public data lActive
+    public data lCommitted
+    public data jSubs
+    public data bVld
+
+    public method new(cId) constructor
+    public method Activate()
+    public method DeActivate()
+    public method IsActive()
+    public method SetValue(cSub, cFld, xVal)
+    public method GetValue(cSub, cFld)
+    public method GetModel(cSub)
+    public method SetVldBlock(bBlock)
+    public method VldData()
+    public method FormCommit()
+    public method WasCommitted()
+endclass
+
+method new(cId) class TecModelMock
+    ::cId        := cId
+    ::lActive    := .F.
+    ::lCommitted := .F.
+    ::jSubs      := JsonObject():new()
+    ::bVld       := nil
+return self
+
+method Activate() class TecModelMock
+    ::lActive := .T.
+return .T.
+
+method DeActivate() class TecModelMock
+    ::lActive := .F.
+return .T.
+
+method IsActive() class TecModelMock
+return ::lActive
+
+method SetValue(cSub, cFld, xVal) class TecModelMock
+    if !::jSubs:hasProperty(cSub)
+        ::jSubs[cSub] := JsonObject():new()
+    endif
+    ::jSubs[cSub][cFld] := xVal
+return .T.
+
+method GetValue(cSub, cFld) class TecModelMock
+    if ::jSubs:hasProperty(cSub) .and. ::jSubs[cSub]:hasProperty(cFld)
+        return ::jSubs[cSub][cFld]
+    endif
+return nil
+
+method GetModel(cSub) class TecModelMock
+    if !::jSubs:hasProperty(cSub)
+        ::jSubs[cSub] := JsonObject():new()
+    endif
+return TecSubMdlMock():new(::jSubs[cSub])
+
+method SetVldBlock(bBlock) class TecModelMock
+    ::bVld := bBlock
+return .T.
+
+method VldData() class TecModelMock
+    if ::bVld != nil
+        return Eval(::bVld, self)
+    endif
+return .T.
+
+method FormCommit() class TecModelMock
+    ::lCommitted := .T.   // NO-OP de proposito: nada de banco em teste unit
+return .T.
+
+method WasCommitted() class TecModelMock
+return ::lCommitted
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecMkModel
+Factory do mock de FwFormModel. Ver comentario do arquivo pra API coberta.
+
+@param cId character - id do modelo (informativo)
+@return TecModelMock
+/*/
+//------------------------------------------------------------------------------
+user function tecMkModel(cId as character)
+    DEFAULT cId := "MOCK"
+return TecModelMock():new(cId)

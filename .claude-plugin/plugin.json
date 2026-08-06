@@ -1,0 +1,24 @@
+{
+  "name": "tlpp-tdd",
+  "description": "TDD autonomo para customizacoes ADVPL/TLPP no Protheus - skills + slash commands + scaffold de framework",
+  "version": "0.3.0",
+  "author": {
+    "name": "Guilherme Pegoraro",
+    "url": "https://github.com/Guipegoraro"
+  },
+  "homepage": "https://github.com/Guipegoraro/tlpp-runner",
+  "repository": "https://github.com/Guipegoraro/tlpp-runner",
+  "license": "MIT",
+  "keywords": [
+    "advpl",
+    "tlpp",
+    "protheus",
+    "totvs",
+    "tdd",
+    "test-driven-development"
+  ],
+  "categories": [
+    "testing",
+    "language-tools"
+  ]
+}

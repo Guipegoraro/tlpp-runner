@@ -1,0 +1,37 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes PROBAT para u_tecCalcDsc (desconto progressivo).
+// Suite: unit (sem dependencia de banco ou rede).
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_tecCalcDsc_semDesconto_ateCent()
+    assertEquals(u_tecCalcDsc(100), 100, "Ate 100 sem desconto")
+    assertEquals(u_tecCalcDsc(50),   50, "50 sem desconto")
+    assertEquals(u_tecCalcDsc(0),     0, "Zero retorna zero")
+return .T.
+
+@TestFixture()
+user function test_tecCalcDsc_5pct_faixaMedia()
+    assertEquals(u_tecCalcDsc(200), 190, "200 com 5% = 190")
+    assertEquals(u_tecCalcDsc(500), 475, "500 com 5% = 475")
+return .T.
+
+@TestFixture()
+user function test_tecCalcDsc_10pct_faixaAlta()
+    assertEquals(u_tecCalcDsc(501),   450.90, "501 com 10% = 450.90")
+    assertEquals(u_tecCalcDsc(1000),     900, "1000 com 10% = 900")
+    assertEquals(u_tecCalcDsc(10000),   9000, "10000 com 10% = 9000")
+return .T.
+
+@TestFixture()
+user function test_tecCalcDsc_limiteEntreFaixas()
+    assertEquals(u_tecCalcDsc(100),    100, "Limite 100 sem desconto")
+    assertEquals(u_tecCalcDsc(100.01), 100.01 * 0.95, "100.01 com 5%")
+    assertEquals(u_tecCalcDsc(500),    475, "Limite 500 ainda 5%")
+    assertEquals(u_tecCalcDsc(500.01), 500.01 * 0.90, "500.01 com 10%")
+return .T.

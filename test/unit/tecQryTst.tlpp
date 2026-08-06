@@ -1,0 +1,100 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes do wrapper SQL generico u_tecQryFirst/u_tecQryAll (issue #4).
+// Sem banco, sem rede - usa o mock u_tecMkSql.
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_tecQry_first_com_mock()
+    local jRow
+    local cSql := "SELECT A1_NOME FROM SA1 WHERE A1_COD='000001'"
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkSql(cSql, { ;
+        u_tecMkRow({{"A1_NOME", "ACME LTDA"}}) ;
+    })
+
+    jRow := u_tecQryFirst(cSql)
+    u_tecAssertTrue("retorno nao-nil", jRow != nil)
+    if jRow != nil
+        u_tecAssertEq("A1_NOME", "ACME LTDA", jRow["A1_NOME"])
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecQry_first_sem_mock_retorna_nil()
+    local jRow
+
+    u_tecAssertReset()
+    u_tecTstStart()
+    // Sem u_tecMkSql configurado
+
+    jRow := u_tecQryFirst("SELECT * FROM nao_mockado")
+    u_tecAssertTrue("sem mock deve retornar nil", jRow == nil)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecQry_all_multiplas_linhas()
+    local aRows
+    local cSql := "SELECT COD, NOME FROM TST"
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkSql(cSql, { ;
+        u_tecMkRow({{"COD", "001"}, {"NOME", "A"}}), ;
+        u_tecMkRow({{"COD", "002"}, {"NOME", "B"}}), ;
+        u_tecMkRow({{"COD", "003"}, {"NOME", "C"}}) ;
+    })
+
+    aRows := u_tecQryAll(cSql)
+    u_tecAssertEq("3 linhas", 3, Len(aRows))
+    if Len(aRows) >= 3
+        u_tecAssertEq("row[1].NOME", "A", aRows[1]["NOME"])
+        u_tecAssertEq("row[3].COD",  "003", aRows[3]["COD"])
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecQry_all_sem_mock_retorna_vazio()
+    local aRows
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    aRows := u_tecQryAll("SELECT * FROM zzz")
+    u_tecAssertEq("array vazio", 0, Len(aRows))
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecQry_first_pega_primeira_linha()
+    local jRow
+    local cSql := "SELECT * FROM TST ORDER BY COD"
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkSql(cSql, { ;
+        u_tecMkRow({{"COD", "PRIMEIRA"}}), ;
+        u_tecMkRow({{"COD", "SEGUNDA"}}) ;
+    })
+
+    jRow := u_tecQryFirst(cSql)
+    u_tecAssertEq("primeira linha", "PRIMEIRA", jRow["COD"])
+
+    u_tecTstStop()
+return u_tecAssertsOk()

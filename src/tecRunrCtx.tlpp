@@ -1,0 +1,68 @@
+#include "tlpp-core.th"
+
+//------------------------------------------------------------------------------
+// Contexto por-request do /runner/exec.
+//
+// NOTA: este arquivo NAO tem `namespace` declarado de proposito - sem
+// namespace, `user function tecCtxXxx` registra alias global `u_tecCtxXxx`
+// que e acessivel via tlpp.ffunc() (necessario pra /runner/exec encontrar
+// a funcao por nome). Modulos com namespace tem alias suprimido.
+//
+// O Invoke-TlppRunner.ps1 manda no body da POST campos como:
+//   projectName, testDbAlias, dbAccessHost, dbAccessPort
+//
+// tecRunrExec chama u_tecCtxClear() no inicio e u_tecCtxSet(k,v) pra cada
+// campo. Helpers de teste (u_tecTstConn etc) leem via u_tecCtxGet pra usar
+// o banco e config do projeto correto.
+//
+// AVISO: AppServer pode reusar thread entre requests. SEMPRE limpe no
+// inicio de cada handler.
+//------------------------------------------------------------------------------
+
+static aCtx := {}
+
+user function tecCtxClear()
+    aCtx := {}
+return .T.
+
+user function tecCtxSet(cKey, xVal)
+    local nIdx
+    DEFAULT cKey := ""
+    if Empty(cKey)
+        return .F.
+    endif
+    cKey := Lower(AllTrim(cKey))
+    nIdx := aScan(aCtx, {|x| x[1] == cKey})
+    if nIdx > 0
+        aCtx[nIdx][2] := xVal
+    else
+        aAdd(aCtx, {cKey, xVal})
+    endif
+return .T.
+
+user function tecCtxGet(cKey, xDefault)
+    local nIdx
+    DEFAULT cKey     := ""
+    DEFAULT xDefault := nil
+    if Empty(cKey)
+        return xDefault
+    endif
+    cKey := Lower(AllTrim(cKey))
+    nIdx := aScan(aCtx, {|x| x[1] == cKey})
+    if nIdx > 0
+        return aCtx[nIdx][2]
+    endif
+return xDefault
+
+// Convenience accessors com defaults sensatos para back-compat
+user function tecCtxProject()
+return u_tecCtxGet("projectname", "")
+
+user function tecCtxTestDbAlias()
+return u_tecCtxGet("testdbalias", "MSSQL/PROTHEUS_TST")
+
+user function tecCtxDbAccessHost()
+return u_tecCtxGet("dbaccesshost", "localhost")
+
+user function tecCtxDbAccessPort()
+return u_tecCtxGet("dbaccessport", 7890)

@@ -1,0 +1,190 @@
+#include "tlpp-core.th"
+
+// NOTA sobre namespace: este arquivo tem `namespace tec.runner.api` porque
+// as funcoes (tecRunrPing/Func/Exec) sao acessadas via REST annotations
+// (@Get/@Post), que registram a rota independente do alias `u_`. O helper
+// u_tecRunrToStr ainda fica acessivel via `tec.runner.api.u_tecRunrToStr`
+// se precisar chamar externo. Pra modulos cujas funcoes precisam ser
+// chamadas externamente via /runner/exec (tecAssert, tecWrap, tecMock,
+// tecRunrCtx, tecRefl), NAO use namespace - registro ficaria como
+// `<ns>.u_<nome>` em vez do `u_<nome>` global que o /runner/exec espera.
+namespace tec.runner.api
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecRunrPing
+Health check do tlpp-runner.
+GET /rest/runner/ping
+/*/
+//------------------------------------------------------------------------------
+@Get("/runner/ping")
+user function tecRunrPing()
+    local jResp := JsonObject():new()
+
+    jResp["status"]    := "ok"
+    jResp["env"]       := GetEnvServer()
+    jResp["company"]   := cEmpAnt
+    jResp["branch"]    := cFilAnt
+    jResp["timestamp"] := DToS(Date()) + " " + Time()
+
+    oRest:setKeyHeaderResponse("Content-Type", "application/json")
+    oRest:setStatusCode(200)
+    oRest:setResponse(jResp:toJson())
+return .T.
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecRunrFunc
+Verifica se uma funcao existe no RPO.
+GET /rest/runner/func?name=u_tecCalcDsc
+/*/
+//------------------------------------------------------------------------------
+@Get("/runner/func")
+user function tecRunrFunc()
+    local jResp := JsonObject():new()
+    local cName := ""
+    local jPath
+
+    oRest:setKeyHeaderResponse("Content-Type", "application/json")
+
+    jPath := oRest:getQueryRequest()
+    if jPath != nil .and. jPath:hasProperty("name")
+        cName := AllTrim(jPath["name"])
+    endif
+
+    if Empty(cName)
+        oRest:setStatusCode(400)
+        oRest:setResponse('{"error":"name_obrigatorio"}')
+        return .F.
+    endif
+
+    jResp["function"] := cName
+    jResp["exists"]   := tlpp.ffunc(cName)
+
+    oRest:setStatusCode(200)
+    oRest:setResponse(jResp:toJson())
+return .T.
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecRunrExec
+Executa funcao TLPP/AdvPL pelo nome.
+POST /rest/runner/exec  body: {"function":"...", "argString":"\"a\",\"b\""}
+/*/
+//------------------------------------------------------------------------------
+@Post("/runner/exec")
+user function tecRunrExec()
+    local jReq, jResp
+    local cBody     := ""
+    local cFunc     := ""
+    local cArgs     := ""
+    local cCallStr  := ""
+    local cErr      := ""
+    local nStart    := 0
+    local nDuration := 0
+    local xResult   := nil
+
+    oRest:setKeyHeaderResponse("Content-Type", "application/json")
+
+    // Limpa contexto de qualquer request anterior (thread pode ser reutilizada)
+    u_tecCtxClear()
+
+    // Higiene de modo teste: se um teste anterior NESTA thread estourou antes
+    // do u_tecTstStop(), lModoTst/mocks (statics por thread) vazariam pro
+    // request seguinte - funcao de producao rodaria recebendo mock.
+    u_tecTstStop()
+
+    cBody := oRest:getBodyRequest()
+    if Empty(cBody)
+        oRest:setStatusCode(400)
+        oRest:setResponse('{"error":"body_vazio"}')
+        return .F.
+    endif
+
+    jReq := JsonObject():new()
+    cErr := jReq:fromJson(cBody)
+    if !Empty(cErr)
+        oRest:setStatusCode(400)
+        oRest:setResponse('{"error":"json_invalido"}')
+        return .F.
+    endif
+
+    if jReq:hasProperty("function")
+        cFunc := AllTrim(jReq["function"])
+    endif
+    if Empty(cFunc)
+        oRest:setStatusCode(400)
+        oRest:setResponse('{"error":"function_obrigatoria"}')
+        return .F.
+    endif
+
+    if jReq:hasProperty("argString")
+        cArgs := jReq["argString"]
+    endif
+
+    // Contexto per-project: PS1 manda projectName/testDbAlias/dbAccessHost/Port
+    // Helpers (u_tecTstConn etc) leem via u_tecCtxGet
+    if jReq:hasProperty("projectName")
+        u_tecCtxSet("projectName", jReq["projectName"])
+    endif
+    if jReq:hasProperty("testDbAlias")
+        u_tecCtxSet("testDbAlias", jReq["testDbAlias"])
+    endif
+    if jReq:hasProperty("dbAccessHost")
+        u_tecCtxSet("dbAccessHost", jReq["dbAccessHost"])
+    endif
+    if jReq:hasProperty("dbAccessPort")
+        u_tecCtxSet("dbAccessPort", jReq["dbAccessPort"])
+    endif
+
+    if !tlpp.ffunc(cFunc)
+        oRest:setStatusCode(404)
+        oRest:setResponse('{"error":"funcao_nao_existe","function":"' + cFunc + '"}')
+        return .F.
+    endif
+
+    cCallStr := cFunc + "(" + cArgs + ")"
+    nStart   := Seconds()
+
+    BEGIN SEQUENCE
+        xResult := tlpp.call(cCallStr)
+    RECOVER USING cErr
+        // Erro na funcao chamada pode ter deixado modo teste ligado
+        u_tecTstStop()
+        nDuration := Seconds() - nStart
+        oRest:setStatusCode(500)
+        jResp := JsonObject():new()
+        jResp["error"]     := "runtime"
+        jResp["function"]  := cFunc
+        jResp["argString"] := cArgs
+        jResp["message"]   := cErr
+        jResp["duration"]  := nDuration
+        oRest:setResponse(jResp:toJson())
+        return .F.
+    END SEQUENCE
+
+    nDuration := Seconds() - nStart
+
+    jResp := JsonObject():new()
+    jResp["function"]  := cFunc
+    jResp["argString"] := cArgs
+    jResp["result"]    := u_tecRunrToStr(xResult)
+    jResp["duration"]  := nDuration
+    jResp["env"]       := GetEnvServer()
+
+    oRest:setStatusCode(200)
+    oRest:setResponse(jResp:toJson())
+return .T.
+
+//------------------------------------------------------------------------------
+// Helper: converte qualquer tipo de retorno para string
+//------------------------------------------------------------------------------
+user function tecRunrToStr(xVal)
+    local cType := ValType(xVal)
+    do case
+        case cType == "U" ; return ""
+        case cType == "C" ; return xVal
+        case cType == "N" ; return cValToChar(xVal)
+        case cType == "L" ; return iif(xVal, ".T.", ".F.")
+        case cType == "D" ; return DToS(xVal)
+        case cType == "A" ; return "<array len=" + cValToChar(Len(xVal)) + ">"
+        case cType == "O" ; return "<object>"
+    endcase
+return "<" + cType + ">"

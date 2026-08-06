@@ -1,0 +1,62 @@
+# Artifacts de compilacao do AppServer Protheus
+*.erx_tlpp
+*.ppx_tlpp
+*.erx_prw
+*.ppx_prw
+
+# Logs e saidas
+runner/last-*.log
+runner/last-*.ini
+runner/console.log
+runner/junit/*.xml
+runner/junit/*.json
+runner/sources.lst
+
+# Arquivos manuais de teste
+runner/build-*.ini
+!runner/build-template.ini
+
+# Tokens e credenciais (nunca versionar)
+runner/*.token
+runner/*.aut
+runner/*.key
+**/secrets.*
+
+# Configuracao especifica do ambiente local (cada dev tem a sua)
+runner.config.local.ps1
+runner/runner.config.local.ps1
+
+# Credenciais do REST runner para testes de integracao (cada dev configura)
+test/integracao/tecRunrCfg.tlpp
+
+# Estado de dev (session notes, scratch) - cada dev tem o seu
+docs/SESSION-NOTES.md
+
+# Artifacts do AppServer (caso copia exista)
+bin/
+apo_test/
+data_test/
+
+# IDE / OS
+.vs/
+.vscode/
+.idea/
+.claude/settings.local.json
+
+# SQL outputs/backups dinamicos
+runner/sql/*.local.sql
+runner/sql/*.bak
+*.tmp
+*.swp
+Thumbs.db
+.DS_Store
+
+# PowerShell artifacts
+*.ps1.bak
+
+# Test results temporarios
+test-results/
+coverage/
+
+# Worktrees de agentes (Claude Code) - nunca versionar
+.claude/worktrees/

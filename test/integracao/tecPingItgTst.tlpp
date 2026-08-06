@@ -1,0 +1,75 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes de integracao contra /runner/ping - validam o fluxo REST
+// end-to-end usando u_tecHttpReq + asserts HTTP.
+//
+// Serve de template para testar OUTROS endpoints REST do projeto.
+//
+// PRE-REQUISITOS:
+//   - AppServer REST rodando em http://localhost:8401
+//   - test/integracao/tecRunrCfg.tlpp criado (gitignored)
+//     com u_tecRunrCfgUser/Pwd/BaseUrl
+//------------------------------------------------------------------------------
+
+static function authHeaders()
+    local cUser := u_tecRunrCfgUser()
+    local cPwd  := u_tecRunrCfgPwd()
+    local cAuth := "Basic " + Encode64(cUser + ":" + cPwd)
+return { "Authorization: " + cAuth, "Content-Type: application/json" }
+
+static function pingUrl()
+return u_tecRunrCfgBaseUrl() + "/runner/ping"
+
+@TestFixture()
+user function test_ping_status_200()
+    local jResp
+
+    u_tecAssertReset()
+    jResp := u_tecHttpReq("GET", pingUrl(), , authHeaders())
+    u_tecAssertHttpStatus("ping retorna 200", 200, jResp)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_ping_body_status_ok()
+    local jResp
+
+    u_tecAssertReset()
+    jResp := u_tecHttpReq("GET", pingUrl(), , authHeaders())
+    u_tecAssertHttpStatus("ping 200", 200, jResp)
+    u_tecAssertHttpJsonField("body.status == 'ok'", "status", "ok", jResp)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_ping_body_env_nao_vazio()
+    local jResp, cBody, jBody, cErr, cEnv
+
+    u_tecAssertReset()
+    jResp := u_tecHttpReq("GET", pingUrl(), , authHeaders())
+    u_tecAssertHttpStatus("ping 200", 200, jResp)
+
+    cBody := iif(jResp:hasProperty("body"), jResp["body"], "")
+    jBody := JsonObject():new()
+    cErr  := jBody:fromJson(cBody)
+
+    if Empty(cErr) .and. jBody:hasProperty("env")
+        cEnv := jBody["env"]
+        u_tecAssertNotEmpty("env nao vazio", cEnv)
+    else
+        u_tecAssertTrue("body parseou e tem env", .F.)
+    endif
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_ping_url_inexistente_retorna_erro()
+    local jResp, cUrlBroken
+
+    u_tecAssertReset()
+    cUrlBroken := u_tecRunrCfgBaseUrl() + "/runner/nao-existe-mesmo"
+    jResp := u_tecHttpReq("GET", cUrlBroken, , authHeaders())
+    // HTTPQuote retorna status 999 (ou outro >=400) para URL inexistente
+    u_tecAssertFalse("jResp.ok deve ser .F.", jResp["ok"])
+return u_tecAssertsOk()

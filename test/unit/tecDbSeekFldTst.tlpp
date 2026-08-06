@@ -1,0 +1,77 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes do wrapper u_tecDbSeekFld (issue #5) - generico para padrao
+// DbSelectArea + DbSetOrder + DbSeek + leitura de campo.
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_dbSeekFld_match_simples()
+    local cRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeek("SA1", 1, "01000001", ;
+        u_tecMkRow({{"A1_NOME", "ACME"}, {"A1_TEL", "1234"}}))
+
+    cRet := u_tecDbSeekFld("SA1", 1, "01000001", "A1_NOME")
+    u_tecAssertEq("A1_NOME", "ACME", cRet)
+
+    cRet := u_tecDbSeekFld("SA1", 1, "01000001", "A1_TEL")
+    u_tecAssertEq("A1_TEL", "1234", cRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_dbSeekFld_chave_inexistente_retorna_vazio()
+    local cRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+    // Nao mocka nada
+
+    cRet := u_tecDbSeekFld("SA1", 1, "99999", "A1_NOME")
+    u_tecAssertEq("sem mock retorna vazio", "", cRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_dbSeekFld_campo_inexistente_no_mock()
+    local cRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeek("SB1", 2, "00001", ;
+        u_tecMkRow({{"B1_DESC", "Produto"}}))
+
+    cRet := u_tecDbSeekFld("SB1", 2, "00001", "B1_PRECO")  // mock nao tem B1_PRECO
+    u_tecAssertEq("campo nao mockado", "", cRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_dbSeekFld_ordens_diferentes_chaves_distintas()
+    local cRetO1, cRetO2
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeek("SA2", 1, "001", u_tecMkRow({{"A2_NOME", "POR_ORDEM_1"}}))
+    u_tecMkBdSeek("SA2", 2, "001", u_tecMkRow({{"A2_NOME", "POR_ORDEM_2"}}))
+
+    cRetO1 := u_tecDbSeekFld("SA2", 1, "001", "A2_NOME")
+    cRetO2 := u_tecDbSeekFld("SA2", 2, "001", "A2_NOME")
+
+    u_tecAssertEq("ordem 1", "POR_ORDEM_1", cRetO1)
+    u_tecAssertEq("ordem 2", "POR_ORDEM_2", cRetO2)
+
+    u_tecTstStop()
+return u_tecAssertsOk()

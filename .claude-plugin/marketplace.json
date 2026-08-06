@@ -1,0 +1,16 @@
+{
+  "name": "tlpp-runner",
+  "description": "Marketplace do plugin tlpp-tdd - TDD autonomo para ADVPL/TLPP no Protheus",
+  "owner": {
+    "name": "Guilherme Pegoraro",
+    "url": "https://github.com/Guipegoraro"
+  },
+  "plugins": [
+    {
+      "name": "tlpp-tdd",
+      "source": "./",
+      "description": "TDD autonomo para customizacoes ADVPL/TLPP no Protheus - skills + slash commands + framework de teste com mocks",
+      "version": "0.3.0"
+    }
+  ]
+}

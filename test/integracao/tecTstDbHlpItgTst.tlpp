@@ -1,0 +1,152 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+#include "topconn.ch"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes dos helpers de DB (tecTstDbHlp.tlpp) - issues #7, #8, #9.
+// Roda contra PROTHEUS_TST real via TCLink.
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_dbHlp_createTable_e_drop()
+    local nLink, nLinkAnt, nCount
+    local cTab := "Z_TST_HLP_TMP"
+
+    u_tecAssertReset()
+    nLink := u_tecTstConn(@nLinkAnt)
+    if nLink <= 0
+        u_tecAssertTrue("conectou", .F.)
+        return u_tecAssertsOk()
+    endif
+
+    // Garante limpo
+    u_tecTstDropTable(cTab)
+
+    // Cria
+    u_tecAssertTrue("createTable ok", u_tecTstCreateTable(cTab, { ;
+        {"COD",   "CHAR(6)",       "NOT NULL"}, ;
+        {"NOME",  "CHAR(40)",      "NOT NULL"}, ;
+        {"VALOR", "NUMERIC(10,2)", "DEFAULT 0"} ;
+    }))
+
+    // Confere que existe no banco
+    nCount := tstCountTable(cTab)
+    u_tecAssertEq("tabela existe (0 linhas)", 0, nCount)
+
+    // Drop
+    u_tecAssertTrue("dropTable ok", u_tecTstDropTable(cTab))
+
+    u_tecTstDisconn(nLink, nLinkAnt)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_dbHlp_seed_string_numero_data()
+    local nLink, nLinkAnt, jRow
+    local cTab := "Z_TST_HLP_SEED"
+
+    u_tecAssertReset()
+    nLink := u_tecTstConn(@nLinkAnt)
+    if nLink <= 0
+        u_tecAssertTrue("conectou", .F.)
+        return u_tecAssertsOk()
+    endif
+
+    u_tecTstDropTable(cTab)
+    u_tecTstCreateTable(cTab, { ;
+        {"COD",   "CHAR(6)",       "NOT NULL"}, ;
+        {"NOME",  "CHAR(40)",      "NOT NULL"}, ;
+        {"VALOR", "NUMERIC(10,2)", "DEFAULT 0"}, ;
+        {"DATA",  "CHAR(8)",       "NULL"} ;
+    })
+
+    // Seed: string, numero, data
+    u_tecAssertTrue("seed ok", u_tecTstSeed(cTab, { ;
+        {"COD",   "000001"}, ;
+        {"NOME",  "ACME O'BRIEN"}, ;
+        {"VALOR", 1234.56}, ;
+        {"DATA",  CToD("11/05/2026")} ;
+    }))
+
+    // Le de volta
+    jRow := tstSelectFirst(cTab, "COD='000001'")
+    u_tecAssertNotEmpty("row lida", jRow)
+    if jRow != nil
+        u_tecAssertEq("NOME com aspa escapada", "ACME O'BRIEN", AllTrim(jRow["NOME"]))
+        u_tecAssertEq("VALOR numerico", 1234.56, jRow["VALOR"])
+        u_tecAssertEq("DATA DToS", "20260511", AllTrim(jRow["DATA"]))
+    endif
+
+    u_tecTstDropTable(cTab)
+    u_tecTstDisconn(nLink, nLinkAnt)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_dbHlp_truncate_multiplas()
+    local nLink, nLinkAnt
+    local cTab1 := "Z_TST_HLP_T1"
+    local cTab2 := "Z_TST_HLP_T2"
+
+    u_tecAssertReset()
+    nLink := u_tecTstConn(@nLinkAnt)
+    if nLink <= 0
+        u_tecAssertTrue("conectou", .F.)
+        return u_tecAssertsOk()
+    endif
+
+    u_tecTstDropTable(cTab1)
+    u_tecTstDropTable(cTab2)
+    u_tecTstCreateTable(cTab1, {{"X", "CHAR(10)", "NOT NULL"}})
+    u_tecTstCreateTable(cTab2, {{"Y", "CHAR(10)", "NOT NULL"}})
+
+    u_tecTstSeed(cTab1, {{"X", "a"}})
+    u_tecTstSeed(cTab1, {{"X", "b"}})
+    u_tecTstSeed(cTab2, {{"Y", "c"}})
+
+    u_tecAssertEq("t1 com 2 linhas",  2, tstCountTable(cTab1))
+    u_tecAssertEq("t2 com 1 linha",   1, tstCountTable(cTab2))
+
+    u_tecTstTruncate({cTab1, cTab2})
+
+    u_tecAssertEq("t1 zerada", 0, tstCountTable(cTab1))
+    u_tecAssertEq("t2 zerada", 0, tstCountTable(cTab2))
+
+    u_tecTstDropTable(cTab1)
+    u_tecTstDropTable(cTab2)
+    u_tecTstDisconn(nLink, nLinkAnt)
+return u_tecAssertsOk()
+
+//------------------------------------------------------------------------------
+// Helpers locais do teste (usar fora seria circular)
+//------------------------------------------------------------------------------
+
+static function tstCountTable(cTab as character)
+    local nRet := -1
+    local cQuery := "SELECT COUNT(*) AS QTD FROM " + cTab + " WHERE D_E_L_E_T_ = '' OR D_E_L_E_T_ IS NULL"
+    local cAlias := "QRYC" + StrTran(Time(), ":", "")
+
+    DbUseArea(.T., "TOPCONN", TcGenQry(,, cQuery), cAlias, .F., .T.)
+    DbSelectArea(cAlias)
+    if !Eof()
+        nRet := FieldGet(1)
+    endif
+    DbCloseArea()
+return nRet
+
+static function tstSelectFirst(cTab as character, cWhere as character)
+    local jRet := nil
+    local cQuery := "SELECT * FROM " + cTab + " WHERE " + cWhere
+    local cAlias := "QRYS" + StrTran(Time(), ":", "")
+    local i
+
+    DbUseArea(.T., "TOPCONN", TcGenQry(,, cQuery), cAlias, .F., .T.)
+    DbSelectArea(cAlias)
+    if !Eof()
+        jRet := JsonObject():new()
+        for i := 1 to FCount()
+            jRet[FieldName(i)] := FieldGet(i)
+        next i
+    endif
+    DbCloseArea()
+return jRet

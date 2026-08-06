@@ -1,0 +1,91 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes de u_tecApoStat (issue #33): oraculo RPO via GetAPOInfo.
+// Sem banco e sem mock DE PROPOSITO - a funcao consulta o proprio RPO em que
+// este teste esta compilado, que e o fixture perfeito: este fonte existe nele.
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_tecApoStat_fonte_existente()
+    local cJson, jResp, jProg
+    local cErr := ""
+
+    u_tecAssertReset()
+
+    // TECRUNRRPOTST.TLPP = este proprio fonte; se o teste roda, ele esta no RPO
+    cJson := u_tecApoStat("TECRUNRRPOTST.TLPP")
+    u_tecAssertNotEmpty("retorno json", cJson)
+
+    jResp := JsonObject():new()
+    cErr  := jResp:fromJson(cJson)
+    u_tecAssertEmpty("json valido", cErr)
+
+    u_tecAssertTrue("tem programs", jResp:hasProperty("programs"))
+    jProg := jResp["programs"]["TECRUNRRPOTST.TLPP"]
+    u_tecAssertTrue("entrada do fonte existe", jProg != nil)
+    if jProg != nil
+        u_tecAssertTrue("exists .T.", jProg["exists"])
+        u_tecAssertNotEmpty("dataFonte preenchido", jProg["dataFonte"])
+        // dataFonte comeca com data DToS (8 digitos): "YYYYMMDD ..."
+        u_tecAssertEq("dataFonte formato data", 8, At(" ", jProg["dataFonte"]) - 1)
+    endif
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecApoStat_fonte_inexistente()
+    local cJson, jResp, jProg
+
+    u_tecAssertReset()
+
+    cJson := u_tecApoStat("NAOEXISTE999.TLPP")
+    jResp := JsonObject():new()
+    jResp:fromJson(cJson)
+
+    jProg := jResp["programs"]["NAOEXISTE999.TLPP"]
+    u_tecAssertTrue("entrada presente mesmo ausente do RPO", jProg != nil)
+    if jProg != nil
+        u_tecAssertFalse("exists .F.", jProg["exists"])
+        u_tecAssertEmpty("dataFonte vazio", jProg["dataFonte"])
+    endif
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecApoStat_lista_mista_normaliza()
+    local cJson, jResp, jProgs
+
+    u_tecAssertReset()
+
+    // minusculas + espacos: deve normalizar pra chave UPPER/trim
+    cJson := u_tecApoStat(" tecrunrrpotst.tlpp , NAOEXISTE999.TLPP ")
+    jResp := JsonObject():new()
+    jResp:fromJson(cJson)
+    jProgs := jResp["programs"]
+
+    u_tecAssertNotEmpty("programs nao-vazio (JsonObject)", jProgs)
+    u_tecAssertTrue("existente na lista", jProgs["TECRUNRRPOTST.TLPP"] != nil)
+    u_tecAssertTrue("inexistente na lista", jProgs["NAOEXISTE999.TLPP"] != nil)
+    if jProgs["TECRUNRRPOTST.TLPP"] != nil
+        u_tecAssertTrue("existente exists .T.", jProgs["TECRUNRRPOTST.TLPP"]["exists"])
+    endif
+    if jProgs["NAOEXISTE999.TLPP"] != nil
+        u_tecAssertFalse("inexistente exists .F.", jProgs["NAOEXISTE999.TLPP"]["exists"])
+    endif
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecApoStat_lista_vazia()
+    local cJson, jResp
+
+    u_tecAssertReset()
+
+    cJson := u_tecApoStat("")
+    jResp := JsonObject():new()
+    jResp:fromJson(cJson)
+
+    u_tecAssertTrue("programs presente", jResp:hasProperty("programs"))
+    u_tecAssertEmpty("programs vazio", jResp["programs"])
+return u_tecAssertsOk()

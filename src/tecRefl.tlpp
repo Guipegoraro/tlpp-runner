@@ -1,0 +1,30 @@
+#include "tlpp-core.th"
+
+//------------------------------------------------------------------------------
+// Funcao utilitaria para verificar se uma funcao tem @TestFixture no RPO.
+// Util para diagnosticar problemas de discovery do PROBAT.
+//
+// Uso: POST /runner/exec body: {"function":"u_tecCheckFixture", "argString":"\"u_test_tecBdItg_conecta\""}
+//------------------------------------------------------------------------------
+user function tecCheckFixture(cFunc as character)
+    local lExists := .F.
+    local cMsg    := ""
+
+    DEFAULT cFunc := ""
+
+    if Empty(cFunc)
+        Conout("[checkFixture] funcao vazia")
+        return 1
+    endif
+
+    if !tlpp.ffunc(cFunc)
+        Conout("[checkFixture] funcao nao existe: " + cFunc)
+        return 2
+    endif
+
+    // Verifica se @TestFixture esta presente
+    lExists := Reflection.isAnnotationFunctionPresent(cFunc, "TestFixture")
+    cMsg := "[checkFixture] " + cFunc + " -> @TestFixture: " + iif(lExists, "SIM", "NAO")
+    Conout(cMsg)
+
+return iif(lExists, 0, 3)

@@ -1,0 +1,120 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes dos asserts HTTP estruturados (issue #2).
+// Constroem jResp mockada manualmente (sem TCLink/REST) e validam comportamento.
+//------------------------------------------------------------------------------
+
+static function mkResp(nStatus as numeric, cBody as character)
+    local jRet := JsonObject():new()
+    DEFAULT cBody := ""
+    jRet["ok"]     := (nStatus >= 200 .and. nStatus < 300)
+    jRet["status"] := nStatus
+    jRet["body"]   := cBody
+    jRet["error"]  := ""
+return jRet
+
+//==============================================================================
+// assertHttpStatus
+//==============================================================================
+
+@TestFixture()
+user function test_assertHttpStatus_ok()
+    u_tecAssertReset()
+    u_tecAssertHttpStatus("ping 200", 200, mkResp(200, "{}"))
+return u_tecAssertsOk()  // espera .T.
+
+@TestFixture()
+user function test_assertHttpStatus_falha_em_status_diferente()
+    local lRet
+    u_tecAssertReset()
+    lRet := u_tecAssertHttpStatus("expect 200 got 500", 200, mkResp(500, "err"))
+    // assert deve retornar .F. e tecAssertsOk() == .F.
+    if lRet
+        return .F.  // bug: deveria ter falhado
+    endif
+return !u_tecAssertsOk()  // queremos NEG - falha esperada
+
+//==============================================================================
+// assertHttpBodyContains
+//==============================================================================
+
+@TestFixture()
+user function test_assertHttpBodyContains_ok()
+    u_tecAssertReset()
+    u_tecAssertHttpBodyContains("body has ACME", "ACME", mkResp(200, '{"nome":"ACME LTDA"}'))
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_assertHttpBodyContains_falha()
+    local lRet
+    u_tecAssertReset()
+    lRet := u_tecAssertHttpBodyContains("body has ZZZ", "ZZZ", mkResp(200, '{"nome":"ACME"}'))
+    if lRet
+        return .F.
+    endif
+return !u_tecAssertsOk()
+
+//==============================================================================
+// assertHttpJsonField
+//==============================================================================
+
+@TestFixture()
+user function test_assertHttpJsonField_ok_top_level()
+    u_tecAssertReset()
+    u_tecAssertHttpJsonField("status field", "status", "ok", mkResp(200, '{"status":"ok","env":"DEV"}'))
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_assertHttpJsonField_ok_nested()
+    u_tecAssertReset()
+    u_tecAssertHttpJsonField("nested user.name", "user.name", "ACME", mkResp(200, '{"user":{"name":"ACME","id":1}}'))
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_assertHttpJsonField_falha_path_inexistente()
+    local lRet
+    u_tecAssertReset()
+    lRet := u_tecAssertHttpJsonField("path inexistente", "nao.existe", "x", mkResp(200, '{"a":1}'))
+    if lRet
+        return .F.
+    endif
+return !u_tecAssertsOk()
+
+@TestFixture()
+user function test_assertHttpJsonField_falha_valor_diferente()
+    local lRet
+    u_tecAssertReset()
+    lRet := u_tecAssertHttpJsonField("status err", "status", "ok", mkResp(200, '{"status":"err"}'))
+    if lRet
+        return .F.
+    endif
+return !u_tecAssertsOk()
+
+//==============================================================================
+// Combinado: varios asserts em sequencia - .T. so se todos OK
+//==============================================================================
+
+@TestFixture()
+user function test_assertHttp_combinado_todos_ok()
+    local jResp := mkResp(200, '{"status":"ok","env":"DEV"}')
+
+    u_tecAssertReset()
+    u_tecAssertHttpStatus("status 200",      200, jResp)
+    u_tecAssertHttpBodyContains("body has ok", "ok",  jResp)
+    u_tecAssertHttpJsonField("env field", "env", "DEV", jResp)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_assertHttp_combinado_um_falha()
+    local jResp := mkResp(200, '{"status":"ok"}')
+
+    u_tecAssertReset()
+    u_tecAssertHttpStatus("status 200",       200, jResp)
+    u_tecAssertHttpBodyContains("body has X", "X",   jResp)  // ESTE FALHA
+    u_tecAssertHttpJsonField("status field", "status", "ok", jResp)
+    // tecAssertsOk() deve dar .F. (1 falhou). Negamos pra teste retornar .T. quando comportamento estiver correto.
+return !u_tecAssertsOk()

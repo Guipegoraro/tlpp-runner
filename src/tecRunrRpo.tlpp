@@ -1,0 +1,61 @@
+#include "tlpp-core.th"
+
+// NOTA: SEM namespace de proposito - u_tecApoStat precisa registrar como
+// `u_tecApoStat` global pra ser chamavel via /runner/exec (ver nota em
+// tecRunrApi.tlpp).
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecApoStat
+Oraculo RPO (issue #33): informa, para cada programa, se esta compilado no
+RPO corrente e com qual data/hora de arquivo-fonte (GetAPOInfo). O runner
+compara dataFonte com o mtime do fonte em disco (+-2s) pra decidir se pode
+pular a compilacao sem depender do cache local.
+
+@param cList character - nomes de programa separados por virgula, com
+       extensao, como registrados no RPO (ex: "TECWRAP.TLPP,TECMOCK.TLPP").
+       Case-insensitive; espacos em volta sao ignorados.
+@return character - JSON: {"programs":{"<NOME>":{"exists":l,"dataFonte":"YYYYMMDD HH:MM:SS"}}}
+        dataFonte = data/hora do ARQUIVO em disco no momento da compilacao
+        (nao o instante do build), vazio quando exists=.F.
+/*/
+//------------------------------------------------------------------------------
+user function tecApoStat(cList)
+    local jResp  := JsonObject():new()
+    local jProgs := JsonObject():new()
+    local aNames := {}
+    local cName  := "" as character
+    local cData  := "" as character
+    local nI     := 0 as numeric
+    local aInfo
+    local jEntry
+
+    if ValType(cList) != "C"
+        cList := ""
+    endif
+
+    aNames := StrTokArr(cList, ",")
+    for nI := 1 to Len(aNames)
+        cName := Upper(AllTrim(aNames[nI]))
+        if Empty(cName)
+            loop
+        endif
+
+        jEntry := JsonObject():new()
+        aInfo  := GetAPOInfo(cName)
+
+        if ValType(aInfo) == "A" .and. Len(aInfo) >= 4
+            // aInfo[4] = data do arquivo em disco na compilacao (D);
+            // aInfo[5] = hora "HH:MM:SS" (existe desde build 7.00.090818P)
+            cData := iif(ValType(aInfo[4]) == "D", DToS(aInfo[4]), cValToChar(aInfo[4]))
+            jEntry["exists"]    := .T.
+            jEntry["dataFonte"] := cData + " " + iif(Len(aInfo) >= 5 .and. ValType(aInfo[5]) == "C", aInfo[5], "")
+        else
+            jEntry["exists"]    := .F.
+            jEntry["dataFonte"] := ""
+        endif
+
+        jProgs[cName] := jEntry
+    next nI
+
+    jResp["programs"] := jProgs
+return jResp:toJson()

@@ -1,0 +1,189 @@
+#include "tlpp-core.th"
+#include "topconn.ch"
+
+//------------------------------------------------------------------------------
+// Helpers de banco para testes de integracao - tabela ad-hoc, seed, truncate.
+//
+// PRE-REQUISITO: TCLink ativo no PROTHEUS_TST (usar tstConnTst dos testes
+// de integracao em tecBdItgTst.tlpp).
+//
+// Issues: #7 (CreateTable/DropTable), #8 (Seed), #9 (Truncate)
+//------------------------------------------------------------------------------
+
+//==============================================================================
+// u_tecTstConn(@nLinkAnt) - TCLink dinamico no PROTHEUS_TST
+// u_tecTstDisconn(nLink, nLinkAnt) - restaura conexao anterior
+//
+// Padrao de uso em teste de integracao:
+//   local nLink, nLinkAnt
+//   nLink := u_tecTstConn(@nLinkAnt)
+//   if nLink <= 0 ... endif
+//   ... TCSQLExec/TCQuery aqui ...
+//   u_tecTstDisconn(nLink, nLinkAnt)
+//==============================================================================
+
+user function tecTstConn(/*@*/nLinkAnt)
+    local nLink  := -1
+    local cAlias := u_tecCtxTestDbAlias()  // default "MSSQL/PROTHEUS_TST" se sem contexto
+    local cHost  := u_tecCtxDbAccessHost() // default "localhost"
+    local nPort  := u_tecCtxDbAccessPort() // default 7890
+    nLinkAnt := TCGetConn()
+    nLink    := TCLink(cAlias, cHost, nPort)
+    if nLink > 0
+        TCSetConn(nLink)
+    endif
+return nLink
+
+user function tecTstDisconn(nLink as numeric, nLinkAnt as numeric)
+    DEFAULT nLink    := -1
+    DEFAULT nLinkAnt := 0
+    if nLink > 0
+        TCSetConn(nLinkAnt)
+        TCUnlink(nLink)
+    endif
+return .T.
+
+//==============================================================================
+// u_tecTstCreateTable(cNome, aColunas) - cria tabela Z_TST_* idempotente
+//
+// Adiciona automaticamente:
+//   R_E_C_N_O_ INT IDENTITY(1,1) NOT NULL PRIMARY KEY
+//   D_E_L_E_T_ CHAR(1) NOT NULL DEFAULT ''
+//
+// aColunas = array de { cNome, cTipo, cNotNull } onde:
+//   cNome: nome da coluna (ex "A1_NOME")
+//   cTipo: tipo SQL (ex "CHAR(40)", "NUMERIC(10,2)")
+//   cNotNull: "NOT NULL", "NULL" ou "DEFAULT ..." (opcional, default vazio)
+//
+// Exemplo:
+//   u_tecTstCreateTable("Z_TST_TMP", { ;
+//       {"COD",   "CHAR(6)",        "NOT NULL"}, ;
+//       {"NOME",  "CHAR(40)",       "NOT NULL"}, ;
+//       {"VALOR", "NUMERIC(10,2)",  "DEFAULT 0"} ;
+//   })
+//
+// Retorna .T. se criou ou ja existia. .F. se erro.
+//==============================================================================
+
+user function tecTstCreateTable(cNome as character, aColunas as array)
+    local cSql := ""
+    local i, aCol
+
+    DEFAULT cNome    := ""
+    DEFAULT aColunas := {}
+
+    if Empty(cNome) .or. Len(aColunas) == 0
+        return .F.
+    endif
+
+    cSql += "IF OBJECT_ID('dbo." + cNome + "', 'U') IS NULL "
+    cSql += "CREATE TABLE dbo." + cNome + " ("
+    cSql += "R_E_C_N_O_ INT IDENTITY(1,1) NOT NULL PRIMARY KEY, "
+
+    for i := 1 to Len(aColunas)
+        aCol := aColunas[i]
+        cSql += aCol[1] + " " + aCol[2]
+        if Len(aCol) >= 3 .and. !Empty(aCol[3])
+            cSql += " " + aCol[3]
+        endif
+        cSql += ", "
+    next i
+
+    cSql += "D_E_L_E_T_ CHAR(1) NOT NULL DEFAULT '')"
+
+    if TCSQLExec(cSql) < 0
+        Conout("[tecTstCreateTable] ERRO: " + TCSQLError())
+        return .F.
+    endif
+return .T.
+
+//==============================================================================
+// u_tecTstDropTable(cNome) - drop idempotente
+//==============================================================================
+user function tecTstDropTable(cNome as character)
+    local cSql
+
+    DEFAULT cNome := ""
+    if Empty(cNome)
+        return .F.
+    endif
+
+    cSql := "IF OBJECT_ID('dbo." + cNome + "', 'U') IS NOT NULL DROP TABLE dbo." + cNome
+
+    if TCSQLExec(cSql) < 0
+        Conout("[tecTstDropTable] ERRO: " + TCSQLError())
+        return .F.
+    endif
+return .T.
+
+//==============================================================================
+// u_tecTstSeed(cTabela, aRow) - INSERT 1 linha. aRow eh array de {campo,valor}.
+// Trata tipo: strings escapadas, numeros sem aspas, datas DToS.
+//
+// Exemplo:
+//   u_tecTstSeed("Z_TST_CLIENTE", { ;
+//       {"A1_FILIAL", "01"}, ;
+//       {"A1_COD",    "000001"}, ;
+//       {"A1_NOME",   "ACME LTDA"} ;
+//   })
+//==============================================================================
+user function tecTstSeed(cTabela as character, aRow as array)
+    local cSql     := ""
+    local cFields  := ""
+    local cValues  := ""
+    local i, aField, xVal, cType
+
+    DEFAULT cTabela := ""
+    DEFAULT aRow    := {}
+
+    if Empty(cTabela) .or. Len(aRow) == 0
+        return .F.
+    endif
+
+    for i := 1 to Len(aRow)
+        aField := aRow[i]
+        if i > 1
+            cFields += ", "
+            cValues += ", "
+        endif
+        cFields += aField[1]
+
+        xVal  := aField[2]
+        cType := ValType(xVal)
+        do case
+            case cType == "C"
+                // Escape de aspa simples: ' -> ''
+                cValues += "'" + StrTran(xVal, "'", "''") + "'"
+            case cType == "N"
+                cValues += cValToChar(xVal)
+            case cType == "D"
+                cValues += "'" + DToS(xVal) + "'"
+            case cType == "L"
+                cValues += iif(xVal, "1", "0")
+            case cType == "U"  // nil
+                cValues += "NULL"
+            otherwise
+                cValues += "'" + cValToChar(xVal) + "'"
+        endcase
+    next i
+
+    cSql := "INSERT INTO " + cTabela + " (" + cFields + ") VALUES (" + cValues + ")"
+
+    if TCSQLExec(cSql) < 0
+        Conout("[tecTstSeed] ERRO: " + TCSQLError())
+        return .F.
+    endif
+return .T.
+
+//==============================================================================
+// u_tecTstTruncate(aAliases) - DELETE FROM em multiplas tabelas
+//==============================================================================
+user function tecTstTruncate(aAliases as array)
+    local i
+
+    DEFAULT aAliases := {}
+
+    for i := 1 to Len(aAliases)
+        TCSQLExec("DELETE FROM " + aAliases[i])
+    next i
+return .T.

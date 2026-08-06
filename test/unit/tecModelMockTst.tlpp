@@ -1,0 +1,117 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes do mock de FwFormModel (issue #15): u_tecMkModel.
+// O mock e um duble do oModel que funcoes de validacao/gatilho de ModelDef
+// recebem - permite testar regra de negocio MVC sem Activate real, sem tela
+// e sem banco.
+//------------------------------------------------------------------------------
+
+// Exemplo de regra de negocio como as que vivem em ModelDef (bPost/VldData):
+// pedido precisa de cliente preenchido E total > 0.
+static function vldDemoPedido(oModel)
+    local cCliente := oModel:GetValue("SC5MASTER", "C5_CLIENTE")
+    local nTotal   := oModel:GetValue("SC5MASTER", "C5_TOTAL")
+    if cCliente == nil .or. Empty(cCliente)
+        return .F.
+    endif
+    if nTotal == nil .or. nTotal <= 0
+        return .F.
+    endif
+return .T.
+
+@TestFixture()
+user function test_tecMkModel_activate_deactivate()
+    local oMdl
+    u_tecAssertReset()
+
+    oMdl := u_tecMkModel("DEMOMVC")
+    u_tecAssertTrue("factory retorna objeto",  oMdl != nil)
+    u_tecAssertFalse("nasce inativo",          oMdl:IsActive())
+    u_tecAssertTrue("Activate retorna .T.",    oMdl:Activate())
+    u_tecAssertTrue("ativo apos Activate",     oMdl:IsActive())
+    u_tecAssertTrue("DeActivate retorna .T.",  oMdl:DeActivate())
+    u_tecAssertFalse("inativo apos DeActivate", oMdl:IsActive())
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecMkModel_setvalue_getvalue()
+    local oMdl
+    u_tecAssertReset()
+
+    oMdl := u_tecMkModel("DEMOMVC")
+    oMdl:Activate()
+
+    u_tecAssertTrue("SetValue retorna .T.", oMdl:SetValue("SC5MASTER", "C5_CLIENTE", "000001"))
+    u_tecAssertEq("GetValue devolve o que foi setado", "000001", oMdl:GetValue("SC5MASTER", "C5_CLIENTE"))
+
+    oMdl:SetValue("SC5MASTER", "C5_CLIENTE", "000002")
+    u_tecAssertEq("SetValue sobrescreve", "000002", oMdl:GetValue("SC5MASTER", "C5_CLIENTE"))
+
+    u_tecAssertTrue("campo nunca setado devolve nil", oMdl:GetValue("SC5MASTER", "C5_INEXIST") == nil)
+    u_tecAssertTrue("submodel nunca setado devolve nil", oMdl:GetValue("NAOEXISTE", "C5_QQ") == nil)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecMkModel_getmodel_submodel()
+    local oMdl, oSub
+    u_tecAssertReset()
+
+    oMdl := u_tecMkModel("DEMOMVC")
+    oMdl:Activate()
+    oMdl:SetValue("SC5MASTER", "C5_CLIENTE", "000001")
+
+    // Estilo oModel:GetModel("ID"):GetValue("CAMPO") - comum em validadores
+    oSub := oMdl:GetModel("SC5MASTER")
+    u_tecAssertTrue("GetModel retorna submodel", oSub != nil)
+    u_tecAssertEq("submodel le o mesmo storage", "000001", oSub:GetValue("C5_CLIENTE"))
+
+    oSub:SetValue("C5_TOTAL", 99.5)
+    u_tecAssertEq("escrita via submodel reflete no pai", 99.5, oMdl:GetValue("SC5MASTER", "C5_TOTAL"))
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecMkModel_vlddata_e_commit()
+    local oMdl
+    u_tecAssertReset()
+
+    oMdl := u_tecMkModel("DEMOMVC")
+    oMdl:Activate()
+
+    u_tecAssertTrue("VldData default .T.", oMdl:VldData())
+    u_tecAssertFalse("nada commitado ainda", oMdl:WasCommitted())
+    u_tecAssertTrue("FormCommit no-op retorna .T.", oMdl:FormCommit())
+    u_tecAssertTrue("commit registrado pra assert", oMdl:WasCommitted())
+
+    // Bloco de validacao custom (recebe o proprio mock)
+    oMdl:SetVldBlock({|oM| oM:GetValue("SC5MASTER", "C5_CLIENTE") != nil})
+    u_tecAssertFalse("VldData .F. sem cliente", oMdl:VldData())
+    oMdl:SetValue("SC5MASTER", "C5_CLIENTE", "000001")
+    u_tecAssertTrue("VldData .T. com cliente", oMdl:VldData())
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecMkModel_demo_regra_negocio()
+    local oMdl
+    u_tecAssertReset()
+
+    // O caso da issue: validar regra de ModelDef sem subir tela/banco
+    oMdl := u_tecMkModel("DEMOMVC")
+    oMdl:Activate()
+
+    u_tecAssertFalse("rejeita pedido vazio", vldDemoPedido(oMdl))
+
+    oMdl:SetValue("SC5MASTER", "C5_CLIENTE", "000001")
+    u_tecAssertFalse("rejeita sem total", vldDemoPedido(oMdl))
+
+    oMdl:SetValue("SC5MASTER", "C5_TOTAL", 0)
+    u_tecAssertFalse("rejeita total zero", vldDemoPedido(oMdl))
+
+    oMdl:SetValue("SC5MASTER", "C5_TOTAL", 1500.50)
+    u_tecAssertTrue("aceita pedido completo", vldDemoPedido(oMdl))
+
+    oMdl:DeActivate()
+return u_tecAssertsOk()

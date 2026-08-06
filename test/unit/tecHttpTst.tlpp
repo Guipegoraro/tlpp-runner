@@ -1,0 +1,139 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes do wrapper HTTP generico u_tecHttpReq (issue #1).
+// Sem banco, sem rede - usa o mock de mocks/tecMock.tlpp.
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_tecHttp_get_mock_generico()
+    local jResp
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkHttp("/api/cliente/1", 200, '{"id":1,"nome":"ACME"}')
+    jResp := u_tecHttpReq("GET", "/api/cliente/1")
+
+    u_tecAssertTrue("ok",         jResp["ok"])
+    u_tecAssertEq("status",   200, jResp["status"])
+    u_tecAssertEq("body", '{"id":1,"nome":"ACME"}', jResp["body"])
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecHttp_post_mock_generico()
+    local jResp
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkHttp("/api/cliente", 201, '{"id":99}')
+    jResp := u_tecHttpReq("POST", "/api/cliente", '{"nome":"NOVO"}')
+
+    u_tecAssertTrue("ok",     jResp["ok"])
+    u_tecAssertEq("status", 201, jResp["status"])
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecHttp_mock_erro_ok_false()
+    local jResp
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    // Issue #46: ok do mock tem que espelhar a semantica de prod (2xx),
+    // nao ser .T. fixo - senao teste de cenario de erro passa verde a toa.
+    u_tecMkHttp("GET /api/quebrada", 500, '{"error":"boom"}')
+    jResp := u_tecHttpReq("GET", "/api/quebrada")
+    u_tecAssertFalse("ok .F. com status 500", jResp["ok"])
+    u_tecAssertEq("status preservado", 500, jResp["status"])
+    u_tecAssertEq("body preservado", '{"error":"boom"}', jResp["body"])
+
+    u_tecMkHttp("GET /api/naoachou", 404, '')
+    jResp := u_tecHttpReq("GET", "/api/naoachou")
+    u_tecAssertFalse("ok .F. com status 404", jResp["ok"])
+
+    u_tecMkHttp("GET /api/criada", 201, '{}')
+    jResp := u_tecHttpReq("GET", "/api/criada")
+    u_tecAssertTrue("ok .T. com status 201 (2xx)", jResp["ok"])
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecHttp_put_e_delete()
+    local jResp
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkHttp("/api/cliente/1", 204, "")
+    jResp := u_tecHttpReq("PUT", "/api/cliente/1", '{"nome":"UPD"}')
+    u_tecAssertEq("put status", 204, jResp["status"])
+
+    jResp := u_tecHttpReq("DELETE", "/api/cliente/1")
+    u_tecAssertEq("del status", 204, jResp["status"])
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecHttp_mock_por_verb()
+    local jGet, jPost
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    // Mesma URL, verbos diferentes - mock especifico por verb
+    u_tecMkHttp("GET /api/x",  200, '{"verb":"get"}')
+    u_tecMkHttp("POST /api/x", 201, '{"verb":"post"}')
+
+    jGet  := u_tecHttpReq("GET",  "/api/x")
+    jPost := u_tecHttpReq("POST", "/api/x", '{}')
+
+    u_tecAssertEq("get body",  '{"verb":"get"}',  jGet["body"])
+    u_tecAssertEq("get status", 200, jGet["status"])
+    u_tecAssertEq("post body", '{"verb":"post"}', jPost["body"])
+    u_tecAssertEq("post status", 201, jPost["status"])
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecHttp_sem_mock_retorna_erro()
+    local jResp
+
+    u_tecAssertReset()
+    u_tecTstStart()
+    // Sem nenhum u_tecMkHttp configurado
+
+    jResp := u_tecHttpReq("GET", "/api/inexistente")
+
+    u_tecAssertFalse("ok deve ser .F.", jResp["ok"])
+    u_tecAssertEq("status",   0, jResp["status"])
+    u_tecAssertNotEmpty("error", jResp["error"])
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecHttp_verb_invalido_em_prod()
+    local jResp
+
+    u_tecAssertReset()
+    // NAO chama u_tecTstStart - quer cair na rama de producao
+    // Mas como nao temos backend de teste local pra hit, esperamos erro de
+    // "verbo_invalido" ANTES de qualquer chamada de rede.
+
+    jResp := u_tecHttpReq("PATCH", "http://localhost:0/none")
+
+    u_tecAssertFalse("ok deve ser .F.", jResp["ok"])
+    u_tecAssertNotEmpty("error", jResp["error"])
+return u_tecAssertsOk()

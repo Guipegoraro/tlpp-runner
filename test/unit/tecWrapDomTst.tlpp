@@ -1,0 +1,251 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes dos wrappers de dominio (issue #14): SE1/SC5/SC6 + tipo no MkMv.
+// Sem banco - tudo via mocks (u_tecMkBdSeed).
+// Campos e chaves validados contra o dicionario padrao TOTVS (SIX ordem 1):
+//   SE1: E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+//   SC5: C5_FILIAL+C5_NUM   /   SC6: C6_FILIAL+C6_NUM+C6_ITEM+C6_PRODUTO
+//------------------------------------------------------------------------------
+
+// ===== u_tecBuscaTitulo (SE1) =====
+
+@TestFixture()
+user function test_tecBuscaTitulo_encontrado()
+    local jTit
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeed("SE1", { ;
+        u_tecMkRow({{"E1_PREFIXO","001"}, {"E1_NUM","000000001"}, {"E1_PARCELA","A"}, {"E1_TIPO","NF "}, ;
+                    {"E1_VALOR",1500.50}, {"E1_VENCTO",CToD("15/08/2026")}, {"E1_STATUS","A"}, ;
+                    {"E1_BAIXA",CToD("")}, {"E1_SALDO",1500.50}}) ;
+    })
+
+    jTit := u_tecBuscaTitulo("001", "000000001", "A", "NF")
+    u_tecAssertTrue("titulo encontrado", jTit != nil)
+    if jTit != nil
+        u_tecAssertEq("valor",      1500.50,            jTit["valor"])
+        u_tecAssertEq("vencimento", CToD("15/08/2026"), jTit["vencimento"])
+        u_tecAssertEq("status",     "A",                jTit["status"])
+        u_tecAssertEq("baixa",      CToD(""),           jTit["baixa"])
+        u_tecAssertEq("saldo",      1500.50,            jTit["saldo"])
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBuscaTitulo_nao_encontrado()
+    local jTit
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeed("SE1", { ;
+        u_tecMkRow({{"E1_PREFIXO","001"}, {"E1_NUM","000000001"}, {"E1_PARCELA","A"}, {"E1_TIPO","NF"}}) ;
+    })
+
+    jTit := u_tecBuscaTitulo("001", "000000999", "A", "NF")
+    u_tecAssertTrue("titulo inexistente retorna nil", jTit == nil)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBuscaTitulo_match_com_trim()
+    local jTit
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    // Mock com campos padded (como viriam do banco) e busca com valor "seco"
+    u_tecMkBdSeed("SE1", { ;
+        u_tecMkRow({{"E1_PREFIXO","001"}, {"E1_NUM","000000002"}, {"E1_PARCELA","1"}, {"E1_TIPO","BOL"}, ;
+                    {"E1_VALOR",100}, {"E1_STATUS","B"}}) ;
+    })
+
+    jTit := u_tecBuscaTitulo(" 001 ", "000000002", "1", " BOL ")
+    u_tecAssertTrue("match ignora espacos em volta", jTit != nil)
+    if jTit != nil
+        u_tecAssertEq("status baixado", "B", jTit["status"])
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBuscaTitulo_campos_ausentes_defaults()
+    local jTit
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    // Mock so com a chave - campos de valor ausentes viram defaults neutros
+    u_tecMkBdSeed("SE1", { ;
+        u_tecMkRow({{"E1_PREFIXO","001"}, {"E1_NUM","000000003"}, {"E1_PARCELA",""}, {"E1_TIPO","NF"}}) ;
+    })
+
+    jTit := u_tecBuscaTitulo("001", "000000003", "", "NF")
+    u_tecAssertTrue("achou pela chave", jTit != nil)
+    if jTit != nil
+        u_tecAssertEq("valor default 0",   0,  jTit["valor"])
+        u_tecAssertEq("status default ''", "", jTit["status"])
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+// ===== u_tecBuscaPedido (SC5 + soma SC6) =====
+
+@TestFixture()
+user function test_tecBuscaPedido_com_itens()
+    local jPed
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeed("SC5", { ;
+        u_tecMkRow({{"C5_NUM","000100"}, {"C5_CLIENTE","000001"}, {"C5_LOJACLI","01"}, ;
+                    {"C5_NOTA",""}, {"C5_LIBEROK",""}}) ;
+    })
+    u_tecMkBdSeed("SC6", { ;
+        u_tecMkRow({{"C6_NUM","000100"}, {"C6_ITEM","01"}, {"C6_PRODUTO","PROD01"}, {"C6_QTDVEN",2}, {"C6_VALOR",100.00}}), ;
+        u_tecMkRow({{"C6_NUM","000100"}, {"C6_ITEM","02"}, {"C6_PRODUTO","PROD02"}, {"C6_QTDVEN",1}, {"C6_VALOR",50.25}}), ;
+        u_tecMkRow({{"C6_NUM","000999"}, {"C6_ITEM","01"}, {"C6_PRODUTO","OUTRO"},  {"C6_QTDVEN",9}, {"C6_VALOR",999.99}}) ;
+    })
+
+    jPed := u_tecBuscaPedido("000100")
+    u_tecAssertTrue("pedido encontrado", jPed != nil)
+    if jPed != nil
+        u_tecAssertEq("cliente",                    "000001", jPed["cliente"])
+        u_tecAssertEq("loja",                       "01",     jPed["loja"])
+        u_tecAssertEq("valor_total so deste pedido", 150.25,  jPed["valor_total"])
+        u_tecAssertEq("status aberto",              "aberto", jPed["status"])
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBuscaPedido_status_liberado_faturado()
+    local jPed
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeed("SC5", { ;
+        u_tecMkRow({{"C5_NUM","000200"}, {"C5_CLIENTE","000002"}, {"C5_LOJACLI","01"}, {"C5_NOTA",""},          {"C5_LIBEROK","S"}}), ;
+        u_tecMkRow({{"C5_NUM","000300"}, {"C5_CLIENTE","000003"}, {"C5_LOJACLI","01"}, {"C5_NOTA","000012345"}, {"C5_LIBEROK","S"}}) ;
+    })
+
+    jPed := u_tecBuscaPedido("000200")
+    if jPed != nil
+        u_tecAssertEq("LIBEROK=S sem nota -> liberado", "liberado", jPed["status"])
+    else
+        u_tecAssertTrue("pedido 000200 encontrado", .F.)
+    endif
+
+    jPed := u_tecBuscaPedido("000300")
+    if jPed != nil
+        u_tecAssertEq("nota preenchida -> faturado", "faturado", jPed["status"])
+        u_tecAssertEq("nota exposta", "000012345", jPed["nota"])
+    else
+        u_tecAssertTrue("pedido 000300 encontrado", .F.)
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBuscaPedido_sem_itens_e_inexistente()
+    local jPed
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeed("SC5", { ;
+        u_tecMkRow({{"C5_NUM","000400"}, {"C5_CLIENTE","000004"}, {"C5_LOJACLI","02"}}) ;
+    })
+    // sem seed de SC6
+
+    jPed := u_tecBuscaPedido("000400")
+    u_tecAssertTrue("pedido sem itens encontrado", jPed != nil)
+    if jPed != nil
+        u_tecAssertEq("valor_total 0 sem itens", 0, jPed["valor_total"])
+    endif
+
+    jPed := u_tecBuscaPedido("999999")
+    u_tecAssertTrue("pedido inexistente retorna nil", jPed == nil)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+// ===== u_tecBuscaItensPedido (SC6) =====
+
+@TestFixture()
+user function test_tecBuscaItensPedido_filtra_e_ordena()
+    local aItens
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkBdSeed("SC6", { ;
+        u_tecMkRow({{"C6_NUM","000500"}, {"C6_ITEM","01"}, {"C6_PRODUTO","PROD01"}, {"C6_QTDVEN",3}, {"C6_VALOR",30}}), ;
+        u_tecMkRow({{"C6_NUM","000777"}, {"C6_ITEM","01"}, {"C6_PRODUTO","ALHEIO"}, {"C6_QTDVEN",1}, {"C6_VALOR",10}}), ;
+        u_tecMkRow({{"C6_NUM","000500"}, {"C6_ITEM","02"}, {"C6_PRODUTO","PROD02"}, {"C6_QTDVEN",5}, {"C6_VALOR",75.5}}) ;
+    })
+
+    aItens := u_tecBuscaItensPedido("000500")
+    u_tecAssertEq("dois itens do pedido", 2, Len(aItens))
+    if Len(aItens) == 2
+        u_tecAssertEq("item 1 produto", "PROD01", aItens[1]["produto"])
+        u_tecAssertEq("item 1 qtd",     3,        aItens[1]["qtd"])
+        u_tecAssertEq("item 1 valor",   30,       aItens[1]["valor"])
+        u_tecAssertEq("item 2 produto", "PROD02", aItens[2]["produto"])
+        u_tecAssertEq("item 2 item",    "02",     aItens[2]["item"])
+    endif
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBuscaItensPedido_vazio()
+    local aItens
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    aItens := u_tecBuscaItensPedido("000000")
+    u_tecAssertEq("sem mock retorna array vazio", 0, Len(aItens))
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+// ===== u_tecMkMv com validacao de tipo (SX6 X6_TIPO) =====
+
+@TestFixture()
+user function test_tecMkMv_tipo_valido_registra()
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecAssertTrue("C aceita string",  u_tecMkMv("MV_TESTC", "abc",            "C"))
+    u_tecAssertTrue("N aceita numero",  u_tecMkMv("MV_TESTN", 42,               "N"))
+    u_tecAssertTrue("L aceita logico",  u_tecMkMv("MV_TESTL", .T.,              "L"))
+    u_tecAssertTrue("D aceita data",    u_tecMkMv("MV_TESTD", CToD("01/07/2026"), "D"))
+
+    u_tecAssertEq("GetMv devolve C", "abc", u_tecGetMv("MV_TESTC", ""))
+    u_tecAssertEq("GetMv devolve N", 42,    u_tecGetMv("MV_TESTN", 0))
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecMkMv_tipo_errado_rejeita()
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecAssertFalse("string onde esperava N -> rejeita", u_tecMkMv("MV_TESTX", "nao-e-numero", "N"))
+    u_tecAssertEq("mock rejeitado nao registra (GetMv devolve default)", 99, u_tecGetMv("MV_TESTX", 99))
+
+    // sem cTipo continua funcionando como antes (backward compat)
+    u_tecAssertTrue("sem tipo aceita qualquer valor", u_tecMkMv("MV_TESTY", 123))
+    u_tecAssertEq("GetMv devolve valor sem validacao", 123, u_tecGetMv("MV_TESTY", 0))
+
+    u_tecTstStop()
+return u_tecAssertsOk()

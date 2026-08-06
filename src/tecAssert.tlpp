@@ -1,0 +1,293 @@
+#include "tlpp-core.th"
+#include "totvs.ch"
+
+//------------------------------------------------------------------------------
+// Asserts estruturados para testes rodados via /runner/exec.
+//
+// O assert do PROBAT (assertEquals etc.) so registra resultado quando rodado
+// dentro de tlpp.probat.run. Quando o teste e chamado direto via /runner/exec
+// (caminho preferido pra TDD funcao-a-funcao por economia de tokens), o
+// PROBAT assert nao falha a funcao - todo teste retornaria .T..
+//
+// Esta API resolve isso: cada assert incrementa contador ok/fail, loga
+// [ASSERT_OK]/[ASSERT_FAIL] no Conout, e a funcao do teste termina com
+// `return u_tecAssertsOk()` que retorna .F. se algum assert falhou.
+//
+// Padrao de uso:
+//
+//   @TestFixture()
+//   user function test_minha_funcao()
+//       u_tecAssertReset()
+//       u_tecAssertEq("soma 1+1", 2, u_minhaSoma(1, 1))
+//       u_tecAssertTrue("flag", u_minhaFlag())
+//   return u_tecAssertsOk()
+//
+// Resultado via /runner/exec:
+//   { "result": ".T." }  => todos asserts passaram
+//   { "result": ".F." }  => ao menos um falhou; ler Conout pra ver [ASSERT_FAIL]
+//------------------------------------------------------------------------------
+
+static nAssertsOk   := 0
+static nAssertsFail := 0
+static aAssertFails := {}
+
+//==============================================================================
+// CONTROLE
+//==============================================================================
+
+user function tecAssertReset()
+    nAssertsOk   := 0
+    nAssertsFail := 0
+    aAssertFails := {}
+return .T.
+
+user function tecAssertsOk()
+return (nAssertsFail == 0 .and. nAssertsOk > 0)
+
+user function tecAssertSummary()
+    local jRet := JsonObject():new()
+    jRet["ok"]     := (nAssertsFail == 0 .and. nAssertsOk > 0)
+    jRet["passed"] := nAssertsOk
+    jRet["failed"] := nAssertsFail
+    jRet["fails"]  := aAssertFails
+return jRet
+
+//==============================================================================
+// HELPERS internos
+//==============================================================================
+
+static function tstStr(xVal)
+    local cType := ValType(xVal)
+    do case
+        case cType == "U" ; return "<nil>"
+        case cType == "C" ; return "'" + xVal + "'"
+        case cType == "N" ; return cValToChar(xVal)
+        case cType == "L" ; return iif(xVal, ".T.", ".F.")
+        case cType == "D" ; return DToS(xVal)
+        case cType == "A" ; return "<array len=" + cValToChar(Len(xVal)) + ">"
+        case cType == "O" ; return "<object>"
+    endcase
+return "<" + cType + ">"
+
+static function tstRecordOk(cDesc as character)
+    nAssertsOk++
+    Conout("[ASSERT_OK] " + cDesc)
+return .T.
+
+static function tstRecordFail(cDesc as character, cDetail as character)
+    nAssertsFail++
+    AAdd(aAssertFails, cDesc + " | " + cDetail)
+    Conout("[ASSERT_FAIL] " + cDesc + " | " + cDetail)
+return .F.
+
+//==============================================================================
+// ASSERTS
+//==============================================================================
+
+user function tecAssertEq(cDesc as character, xExpected, xActual)
+    DEFAULT cDesc := ""
+    if xExpected == xActual
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "expected=" + tstStr(xExpected) + " actual=" + tstStr(xActual))
+
+user function tecAssertNeq(cDesc as character, xUnexpected, xActual)
+    DEFAULT cDesc := ""
+    if xUnexpected != xActual
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "unexpected=" + tstStr(xUnexpected) + " actual=" + tstStr(xActual))
+
+user function tecAssertTrue(cDesc as character, lCond as logical)
+    DEFAULT cDesc := ""
+    DEFAULT lCond := .F.
+    if lCond
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "expected=.T. actual=.F.")
+
+user function tecAssertFalse(cDesc as character, lCond as logical)
+    DEFAULT cDesc := ""
+    DEFAULT lCond := .F.
+    if !lCond
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "expected=.F. actual=.T.")
+
+// Registra uma FALHA explicita, sem comparacao de valores. Serve pra infra de
+// teste sinalizar erro fora do fluxo normal de assert - ex: u_tecTstWith ao
+// capturar exception no bloco. Sem isso, os asserts que rodaram ANTES do crash
+// contariam como ok e u_tecAssertsOk() devolveria .T. (teste falso-verde).
+user function tecAssertFail(cDesc as character, cDetail as character)
+    DEFAULT cDesc   := "falha explicita"
+    DEFAULT cDetail := ""
+return tstRecordFail(cDesc, cDetail)
+
+// Empty() em TLPP nao aceita JsonObject/Array - precisamos de check por tipo.
+static function tstIsEmpty(xVal)
+    local cType := ValType(xVal)
+    if xVal == nil
+        return .T.
+    endif
+    do case
+        case cType $ "CNDL"
+            return Empty(xVal)
+        case cType == "A"
+            return Len(xVal) == 0
+        case cType == "J"  // JsonObject (ValType retorna "J" em TLPP, nao "O")
+            // vazio = sem propriedades; GetNames() e seguro (Empty() crasharia)
+            return Len(xVal:GetNames()) == 0
+        case cType == "O"
+            // objeto generico: sem introspeccao segura, nao-nil = nao-vazio
+            return .F.
+    endcase
+return .F.
+
+user function tecAssertEmpty(cDesc as character, xVal)
+    DEFAULT cDesc := ""
+    if tstIsEmpty(xVal)
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "expected=<empty> actual=" + tstStr(xVal))
+
+user function tecAssertNotEmpty(cDesc as character, xVal)
+    DEFAULT cDesc := ""
+    if !tstIsEmpty(xVal)
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "expected=<not empty> actual=" + tstStr(xVal))
+
+user function tecAssertGreater(cDesc as character, xMin, xActual)
+    DEFAULT cDesc := ""
+    if xActual > xMin
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "expected > " + tstStr(xMin) + " actual=" + tstStr(xActual))
+
+user function tecAssertLess(cDesc as character, xMax, xActual)
+    DEFAULT cDesc := ""
+    if xActual < xMax
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "expected < " + tstStr(xMax) + " actual=" + tstStr(xActual))
+
+//==============================================================================
+// ASSERTS HTTP (consomem jResp do u_tecHttpReq: { ok, status, body, error })
+//==============================================================================
+
+user function tecAssertHttpStatus(cDesc as character, nExpected as numeric, jResp)
+    local nActual
+    DEFAULT cDesc := ""
+
+    if jResp == nil
+        return tstRecordFail(cDesc, "jResp e nil (esperava jResp do u_tecHttpReq)")
+    endif
+    if !jResp:hasProperty("status")
+        return tstRecordFail(cDesc, "jResp sem campo 'status'")
+    endif
+
+    nActual := jResp["status"]
+    if nActual == nExpected
+        return tstRecordOk(cDesc + " [HTTP " + cValToChar(nActual) + "]")
+    endif
+return tstRecordFail(cDesc, "expected status=" + cValToChar(nExpected) + " actual=" + cValToChar(nActual) + " body=" + tstStr(jResp["body"]))
+
+user function tecAssertHttpBodyContains(cDesc as character, cExpected as character, jResp)
+    local cBody
+    DEFAULT cDesc := ""
+
+    if jResp == nil .or. !jResp:hasProperty("body")
+        return tstRecordFail(cDesc, "jResp sem campo 'body'")
+    endif
+
+    cBody := jResp["body"]
+    if ValType(cBody) != "C"
+        return tstRecordFail(cDesc, "body nao e string (tipo=" + ValType(cBody) + ")")
+    endif
+
+    if At(cExpected, cBody) > 0
+        return tstRecordOk(cDesc)
+    endif
+return tstRecordFail(cDesc, "body nao contem '" + cExpected + "' | body=" + tstStr(Substr(cBody, 1, 200)))
+
+// Verifica se string contem apenas digitos 0-9
+user function tstIsAllDigits(cStr as character)
+    local i, nCode
+    if Empty(cStr)
+        return .F.
+    endif
+    for i := 1 to Len(cStr)
+        nCode := Asc(Substr(cStr, i, 1))
+        if nCode < 48 .or. nCode > 57
+            return .F.
+        endif
+    next i
+return .T.
+
+// Navega path 'a.b.0.c' em um Json (separador '.'). Indices numericos viram array index (0-based).
+// Retorna { found, value } - found=.F. se path nao existe.
+static function tstJsonPathGet(jJson, cPath as character)
+    local aParts := StrTokArr2(cPath, ".")
+    local i, cPart, nIdx
+    local xCur := jJson
+    local jRet := JsonObject():new()
+
+    for i := 1 to Len(aParts)
+        cPart := aParts[i]
+        if xCur == nil
+            jRet["found"] := .F.
+            jRet["value"] := nil
+            return jRet
+        endif
+
+        if u_tstIsAllDigits(cPart)
+            // Indice numerico - tenta como array
+            nIdx := Val(cPart) + 1  // AdvPL/TLPP eh 1-based
+            if ValType(xCur) == "A" .and. nIdx >= 1 .and. nIdx <= Len(xCur)
+                xCur := xCur[nIdx]
+                LOOP
+            endif
+        endif
+
+        // Tenta como key de objeto (JsonObject - tipo pode ser O ou J em TLPP)
+        if xCur:hasProperty(cPart)
+            xCur := xCur[cPart]
+        else
+            jRet["found"] := .F.
+            jRet["value"] := nil
+            return jRet
+        endif
+    next i
+
+    jRet["found"] := .T.
+    jRet["value"] := xCur
+return jRet
+
+user function tecAssertHttpJsonField(cDesc as character, cFieldPath as character, xExpected, jResp)
+    local cBody, jBody, cErr, jPath
+    DEFAULT cDesc := ""
+
+    if jResp == nil .or. !jResp:hasProperty("body")
+        return tstRecordFail(cDesc, "jResp sem campo 'body'")
+    endif
+
+    cBody := jResp["body"]
+    if ValType(cBody) != "C" .or. Empty(cBody)
+        return tstRecordFail(cDesc, "body vazio ou nao-string")
+    endif
+
+    jBody := JsonObject():new()
+    cErr  := jBody:fromJson(cBody)
+    if !Empty(cErr)
+        return tstRecordFail(cDesc, "body nao parseia como Json: " + cErr)
+    endif
+
+    jPath := tstJsonPathGet(jBody, cFieldPath)
+    if !jPath["found"]
+        return tstRecordFail(cDesc, "path '" + cFieldPath + "' nao encontrado no body")
+    endif
+
+    if jPath["value"] == xExpected
+        return tstRecordOk(cDesc + " [" + cFieldPath + "=" + tstStr(xExpected) + "]")
+    endif
+return tstRecordFail(cDesc, "path='" + cFieldPath + "' expected=" + tstStr(xExpected) + " actual=" + tstStr(jPath["value"]))

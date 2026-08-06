@@ -1,0 +1,101 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Feature demo: u_tecCalcCmsn(cCod, cLoja, nValor) - comissao de vendedor.
+//
+// Regras:
+//   - % base vem do parametro MV_TECCOM (default 5)
+//   - Aplica desconto progressivo u_tecCalcDsc sobre nValor primeiro
+//   - Se cliente eh VIP (A1_GRPVEN="VIP"), bonus +2% sobre o valor descontado
+//   - Filial fixa "01"
+//   - Retorno: comissao em $ (numeric), 0 se cliente nao existe
+//
+// Chave de busca SA1 ordem 1: filial + cod + loja (concatenacao sem separador,
+// padrao Protheus). Ex: "01" + "000001" + "01" = "0100000101"
+//------------------------------------------------------------------------------
+
+@TestFixture()
+user function test_calcCmsn_caminho_feliz_sem_vip()
+    local nRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkMv("MV_TECCOM", 5)  // 5% comissao base
+    u_tecMkBdSeek("SA1", 1, "0100000101", u_tecMkRow({{"A1_GRPVEN", "PADRAO"}}))
+
+    // Valor 200 -> desconto 5% (faixa media) = 190 -> comissao 5% = 9.50
+    nRet := u_tecCalcCmsn("000001", "01", 200)
+    u_tecAssertEq("comissao 5% sobre 190", 9.50, nRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_calcCmsn_cliente_vip_ganha_bonus_2pct()
+    local nRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkMv("MV_TECCOM", 5)
+    u_tecMkBdSeek("SA1", 1, "0100000201", u_tecMkRow({{"A1_GRPVEN", "VIP"}}))
+
+    // Valor 1000 -> desconto 10% (faixa alta) = 900 -> comissao 5%+2% = 7% = 63
+    nRet := u_tecCalcCmsn("000002", "01", 1000)
+    u_tecAssertEq("comissao 7% sobre 900", 63.00, nRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_calcCmsn_cliente_inexistente_retorna_zero()
+    local nRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    u_tecMkMv("MV_TECCOM", 5)
+    // Sem u_tecMkBdSeek - cliente nao existe
+
+    nRet := u_tecCalcCmsn("999999", "99", 500)
+    u_tecAssertEq("cliente inexistente retorna 0", 0, nRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_calcCmsn_valor_zero_retorna_zero()
+    local nRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    nRet := u_tecCalcCmsn("000001", "01", 0)
+    u_tecAssertEq("valor zero retorna 0", 0, nRet)
+
+    nRet := u_tecCalcCmsn("000001", "01", -10)
+    u_tecAssertEq("valor negativo retorna 0", 0, nRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_calcCmsn_usa_default_se_mv_nao_configurado()
+    local nRet
+
+    u_tecAssertReset()
+    u_tecTstStart()
+
+    // Nao mocka MV_TECCOM - usa default 5
+    u_tecMkBdSeek("SA1", 1, "0100000301", u_tecMkRow({{"A1_GRPVEN", "PADRAO"}}))
+
+    // Valor 100 -> sem desconto (faixa baixa) = 100 -> 5% = 5.00
+    nRet := u_tecCalcCmsn("000003", "01", 100)
+    u_tecAssertEq("default mv_teccom=5", 5.00, nRet)
+
+    u_tecTstStop()
+return u_tecAssertsOk()

@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell*Invoke-TlppRunner*)",
+      "Bash(*Invoke-TlppRunner.ps1*)",
+      "Bash(powershell*Invoke-TlppBuild*)",
+      "Bash(*Invoke-TlppBuild.ps1*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)"
+    ]
+  },
+  "enabledPlugins": {
+    "skill-creator@claude-plugins-official": true,
+    "tlpp-tdd@tlpp-local": false
+  }
+}

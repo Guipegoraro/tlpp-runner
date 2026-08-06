@@ -1,0 +1,79 @@
+#include "tlpp-core.th"
+#include "totvs.ch"
+#include "topconn.ch"
+
+//------------------------------------------------------------------------------
+// Smoke test do /tlpp-tdd-project-init: TCLink no alias do projeto +
+// INSERT + SELECT + cleanup. Validacao end-to-end de que:
+//   - u_tecCtxTestDbAlias retorna o alias correto (propagado de /runner/exec)
+//   - TCLink no alias funciona (DBAccess vivo, ini com secao certa)
+//   - Schema Z_TST_* foi aplicado no banco (tabela Z_TST_CLIENTE existe)
+//   - Write/read funciona (DBAccess login com db_owner)
+//
+// SEM namespace de proposito (vide nota em tecRunrCtx.tlpp) - precisa
+// registrar u_tecSmkProjInit como alias global pra /runner/exec resolver.
+//
+// Retorna .T. se tudo OK. Em falha, Conout descreve, retorna .F..
+// Cleanup do INSERT roda mesmo em falha parcial (DELETE WHERE marker).
+//------------------------------------------------------------------------------
+
+user function tecSmkProjInit()
+    local nLink      := -1
+    local nLinkAnt   := 0
+    local cAlias     := ""
+    local cTime      := Time()  // "HH:MM:SS"
+    local cMarker    := SubStr(cTime, 1, 2) + SubStr(cTime, 4, 2) + SubStr(cTime, 7, 2)  // HHMMSS = 6 chars (cabe em A1_COD CHAR(6))
+    local cSqlIns    := ""
+    local jRow
+
+    u_tecAssertReset()
+
+    cAlias := u_tecCtxTestDbAlias()
+    Conout("[smk-proj-init] alias contexto: " + cAlias)
+    u_tecAssertNotEmpty("alias do contexto", cAlias)
+
+    nLink := u_tecTstConn(@nLinkAnt)
+    Conout("[smk-proj-init] TCLink " + cAlias + " => nLink=" + cValToChar(nLink))
+    u_tecAssertGreater("TCLink positivo", 0, nLink)
+
+    if nLink <= 0
+        return u_tecAssertsOk()
+    endif
+
+    // Limpa qualquer leftover do mesmo marker (re-rodar no mesmo segundo)
+    TCSQLExec("DELETE FROM Z_TST_CLIENTE WHERE A1_COD='" + cMarker + "'")
+
+    // Schema aplicado? Tabela existe e responde a WHERE 1=2 (zero linhas, sem custo).
+    if TCSQLExec("SELECT 1 AS X FROM dbo.Z_TST_CLIENTE WHERE 1=2") < 0
+        Conout("[smk-proj-init] Z_TST_CLIENTE NAO existe - schema nao aplicado")
+        u_tecAssertTrue("tabela Z_TST_CLIENTE existe", .F.)
+        u_tecTstDisconn(nLink, nLinkAnt)
+        return u_tecAssertsOk()
+    endif
+    u_tecAssertTrue("tabela Z_TST_CLIENTE existe", .T.)
+
+    // Insert marker (CGC padded em 14, NOME composto)
+    cSqlIns := "INSERT INTO Z_TST_CLIENTE (A1_FILIAL, A1_COD, A1_LOJA, A1_CGC, A1_NOME, D_E_L_E_T_) "
+    cSqlIns += "VALUES ('01', '" + cMarker + "', '01', '" + PadR(cMarker, 14) + "', 'SMOKE PROJ-INIT " + cMarker + "', '')"
+    if TCSQLExec(cSqlIns) < 0
+        Conout("[smk-proj-init] INSERT falhou: " + TCSQLError())
+        u_tecAssertTrue("INSERT marker", .F.)
+        u_tecTstDisconn(nLink, nLinkAnt)
+        return u_tecAssertsOk()
+    endif
+
+    // Select back via wrapper (passa por u_tecQryFirst)
+    jRow := u_tecQryFirst("SELECT A1_NOME FROM Z_TST_CLIENTE WHERE A1_COD='" + cMarker + "'")
+    if jRow == nil .or. !jRow:hasProperty("A1_NOME")
+        Conout("[smk-proj-init] SELECT nao retornou linha")
+        u_tecAssertTrue("SELECT marker", .F.)
+    else
+        u_tecAssertEq("nome do marker", "SMOKE PROJ-INIT " + cMarker, AllTrim(jRow["A1_NOME"]))
+    endif
+
+    // Cleanup
+    TCSQLExec("DELETE FROM Z_TST_CLIENTE WHERE A1_COD='" + cMarker + "'")
+    Conout("[smk-proj-init] cleanup OK")
+
+    u_tecTstDisconn(nLink, nLinkAnt)
+return u_tecAssertsOk()

@@ -1,0 +1,20 @@
+#include "tlpp-core.th"
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} u_helloTst
+Funcao de validacao do tlpp-runner.
+Util para testar o endpoint /runner/exec.
+
+@author  tlpp-runner
+@since   2026-05-09
+@version 1.0
+@type    User Function
+/*/
+//------------------------------------------------------------------------------
+user function helloTst()
+    local cMsg := "Hello TST - tlpp-runner OK" as character
+
+    Conout(cMsg)
+    Conout("Environment: " + GetEnvServer())
+    Conout("Empresa.Filial: " + cEmpAnt + "." + cFilAnt)
+return 0

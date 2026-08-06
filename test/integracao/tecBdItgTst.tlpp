@@ -1,0 +1,162 @@
+#include "tlpp-core.th"
+#include "tlpp-probat.th"
+#include "totvs.ch"
+#include "topconn.ch"
+
+using namespace tlpp.probat
+
+//------------------------------------------------------------------------------
+// Testes de integracao: tocam o banco real PROTHEUS_TST via TCLink dinamico.
+// AppServer continua em DESENVOLVIMENTO.
+//
+// Usa asserts estruturados de src/tecAssert.tlpp (u_tecAssert*) para que
+// `return u_tecAssertsOk()` REALMENTE retorne .F. quando ao menos um assert
+// falha - permite a LLM consumidora confiar no result do /runner/exec.
+//
+// PRE-REQUISITOS:
+//   - PROTHEUS_TST criado (runner/db-setup.ps1)
+//   - DBAccess rodando (porta 7892) com login com db_owner em PROTHEUS_TST
+//
+// COMO RODAR (funcao especifica):
+//   .\runner\Invoke-TlppRunner.ps1 -Function u_test_tecBdItg_conecta
+//------------------------------------------------------------------------------
+
+static function tstConnTst(/*@*/nLinkAnt)
+    local nLink := -1
+    nLinkAnt := TCGetConn()
+    // Formato oficial TOTVS: <tipo_driver>/<alias> conforme TCLink doc
+    nLink    := TCLink("MSSQL/PROTHEUS_TST", "localhost", 7892)
+    if nLink > 0
+        TCSetConn(nLink)
+    endif
+return nLink
+
+static function tstDisconn(nLink, nLinkAnt)
+    if nLink > 0
+        TCSetConn(nLinkAnt)
+        TCUnlink(nLink)
+    endif
+return .T.
+
+static function tstResetBd()
+    TCSQLExec("DELETE FROM Z_TST_CLIENTE")
+    TCSQLExec("DELETE FROM Z_TST_PEDIDO")
+return .T.
+
+static function tstInsCliente(cCod as character, cCgc as character, cNome as character)
+    local cSql := ""
+    cSql := "INSERT INTO Z_TST_CLIENTE (A1_FILIAL, A1_COD, A1_LOJA, A1_CGC, A1_NOME, D_E_L_E_T_) "
+    cSql += "VALUES ('01', '" + cCod + "', '01', '" + cCgc + "', '" + cNome + "', '')"
+    TCSQLExec(cSql)
+return .T.
+
+//==============================================================================
+// CASOS DE TESTE
+//==============================================================================
+
+@TestFixture()
+user function test_tecBdItg_conecta()
+    local nLink    := -1
+    local nLinkAnt := 0
+
+    u_tecAssertReset()
+    nLink := tstConnTst(@nLinkAnt)
+    Conout("[itg_conecta] TCLink retornou: " + cValToChar(nLink))
+    u_tecAssertGreater("TCLink no PROTHEUS_TST", 0, nLink)
+    tstDisconn(nLink, nLinkAnt)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBdItg_insert_select()
+    local nLink    := -1
+    local nLinkAnt := 0
+    local cNome    := ""
+    local cQuery   := ""
+
+    u_tecAssertReset()
+    nLink := tstConnTst(@nLinkAnt)
+    Conout("[itg_insert] TCLink: " + cValToChar(nLink))
+    if nLink <= 0
+        u_tecAssertTrue("conectou", .F.)
+        tstDisconn(nLink, nLinkAnt)
+        return u_tecAssertsOk()
+    endif
+
+    tstResetBd()
+    tstInsCliente("000001", "11111111000111", "ACME LTDA")
+
+    cQuery := "SELECT A1_NOME FROM Z_TST_CLIENTE WHERE A1_CGC = '11111111000111' AND D_E_L_E_T_ = ''"
+    DbUseArea(.T., "TOPCONN", TcGenQry(,, cQuery), "QRYITG", .F., .T.)
+    if !QRYITG->(Eof())
+        cNome := AllTrim(QRYITG->A1_NOME)
+    endif
+    QRYITG->(DbCloseArea())
+
+    Conout("[itg_insert] cNome lido: '" + cNome + "'")
+    tstDisconn(nLink, nLinkAnt)
+    u_tecAssertEq("Cliente lido apos insert", "ACME LTDA", cNome)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBdItg_multiplos()
+    local nLink    := -1
+    local nLinkAnt := 0
+    local nCount   := 0
+    local cQuery   := ""
+
+    u_tecAssertReset()
+    nLink := tstConnTst(@nLinkAnt)
+    if nLink <= 0
+        u_tecAssertTrue("conectou", .F.)
+        tstDisconn(nLink, nLinkAnt)
+        return u_tecAssertsOk()
+    endif
+
+    tstResetBd()
+    tstInsCliente("000001", "11111111000111", "CLIENTE A")
+    tstInsCliente("000002", "22222222000122", "CLIENTE B")
+    tstInsCliente("000003", "33333333000133", "CLIENTE C")
+
+    cQuery := "SELECT COUNT(*) AS QTD FROM Z_TST_CLIENTE WHERE D_E_L_E_T_ = ''"
+    DbUseArea(.T., "TOPCONN", TcGenQry(,, cQuery), "QRYITG", .F., .T.)
+    if !QRYITG->(Eof())
+        nCount := QRYITG->QTD
+    endif
+    QRYITG->(DbCloseArea())
+
+    Conout("[itg_multiplos] nCount: " + cValToChar(nCount))
+    tstDisconn(nLink, nLinkAnt)
+    u_tecAssertEq("3 clientes inseridos", 3, nCount)
+return u_tecAssertsOk()
+
+@TestFixture()
+user function test_tecBdItg_delete()
+    local nLink    := -1
+    local nLinkAnt := 0
+    local nCount   := 0
+    local cQuery   := ""
+
+    u_tecAssertReset()
+    nLink := tstConnTst(@nLinkAnt)
+    if nLink <= 0
+        u_tecAssertTrue("conectou", .F.)
+        tstDisconn(nLink, nLinkAnt)
+        return u_tecAssertsOk()
+    endif
+
+    tstResetBd()
+    tstInsCliente("000001", "11111111000111", "CLIENTE A")
+    tstInsCliente("000002", "22222222000122", "CLIENTE B")
+    TCSQLExec("UPDATE Z_TST_CLIENTE SET D_E_L_E_T_ = '*' WHERE A1_CGC = '22222222000122'")
+
+    cQuery := "SELECT COUNT(*) AS QTD FROM Z_TST_CLIENTE WHERE D_E_L_E_T_ = ''"
+    DbUseArea(.T., "TOPCONN", TcGenQry(,, cQuery), "QRYITG", .F., .T.)
+    if !QRYITG->(Eof())
+        nCount := QRYITG->QTD
+    endif
+    QRYITG->(DbCloseArea())
+
+    Conout("[itg_delete] nCount apos delete logico: " + cValToChar(nCount))
+    tstDisconn(nLink, nLinkAnt)
+    u_tecAssertEq("1 ativo apos delete logico", 1, nCount)
+return u_tecAssertsOk()

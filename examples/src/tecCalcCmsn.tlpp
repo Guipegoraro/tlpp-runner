@@ -1,0 +1,53 @@
+#include "tlpp-core.th"
+
+//------------------------------------------------------------------------------
+// u_tecCalcCmsn(cCod, cLoja, nValor) -> nComissao
+//
+// Calcula comissao de vendedor sobre valor de pedido.
+// Regras:
+//   - % base do parametro MV_TECCOM (default 5)
+//   - Aplica u_tecCalcDsc(nValor) primeiro (desconto progressivo)
+//   - Bonus +2% se cliente eh VIP (A1_GRPVEN="VIP")
+//   - Retorna 0 se cliente nao existe ou nValor <= 0
+//
+// Wrappers usados (todos mockaveis em modo teste):
+//   u_tecGetMv, u_tecDbSeekFld, u_tecCalcDsc (existente)
+//------------------------------------------------------------------------------
+
+user function tecCalcCmsn(cCod as character, cLoja as character, nValor as numeric)
+    local nPct      := 0
+    local nDescVal  := 0
+    local nCmsn     := 0
+    local cGrupo    := ""
+    local cKey      := ""
+
+    DEFAULT cCod   := ""
+    DEFAULT cLoja  := ""
+    DEFAULT nValor := 0
+
+    if nValor <= 0 .or. Empty(cCod) .or. Empty(cLoja)
+        return 0
+    endif
+
+    // Busca grupo do cliente em SA1 (filial "01" fixa)
+    cKey   := "01" + cCod + cLoja
+    cGrupo := u_tecDbSeekFld("SA1", 1, cKey, "A1_GRPVEN")
+
+    if Empty(cGrupo)
+        // Cliente nao existe
+        return 0
+    endif
+
+    // Aplica desconto progressivo (funcao existente do projeto)
+    nDescVal := u_tecCalcDsc(nValor)
+
+    // % comissao base
+    nPct := u_tecGetMv("MV_TECCOM", 5)
+
+    // Bonus VIP
+    if AllTrim(cGrupo) == "VIP"
+        nPct += 2
+    endif
+
+    nCmsn := Round(nDescVal * nPct / 100, 2)
+return nCmsn

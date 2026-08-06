@@ -1,0 +1,565 @@
+#include "tlpp-core.th"
+#include "totvs.ch"
+
+//------------------------------------------------------------------------------
+// Wrappers de dependencias externas para permitir injecao de mocks em testes.
+//
+// Regra do projeto: TODO codigo novo que precise de banco, GetMv, FWRest ou
+// Date/Time deve passar por esses wrappers. Em modo teste (u_tecTstStart),
+// os wrappers devolvem dados em memoria configurados via mocks/tecMock.tlpp.
+//
+// Estado global do modo teste em variaveis static (sem `as <tipo>` para
+// permitir inicializacao com nil sem mismatch).
+//------------------------------------------------------------------------------
+
+static lModoTst   := .F.
+static jMockBd    := nil
+static jMockMv    := nil
+static jMockHttp  := nil
+static jMockSql   := nil
+static dMockHoje  := nil
+static cMockHora  := ""
+
+//==============================================================================
+// CONTROLE DO MODO TESTE
+//==============================================================================
+
+user function tecTstStart()
+    lModoTst  := .T.
+    jMockBd   := JsonObject():new()
+    jMockMv   := JsonObject():new()
+    jMockHttp := JsonObject():new()
+    jMockSql  := JsonObject():new()
+    dMockHoje := nil
+    cMockHora := ""
+return .T.
+
+user function tecTstStop()
+    lModoTst  := .F.
+    jMockBd   := nil
+    jMockMv   := nil
+    jMockHttp := nil
+    jMockSql  := nil
+    dMockHoje := nil
+    cMockHora := ""
+return .T.
+
+user function tecTstAtivo()
+return lModoTst
+
+//==============================================================================
+// 1) WRAPPER DE BANCO - DbSeek + leitura de campo generico
+//
+// u_tecDbSeekFld(cAlias, nOrder, cKey, cFld) -> valor do campo ou ""
+//
+//   Em prod: DbSelectArea + DbSetOrder + DbSeek + FieldGet do campo
+//   Em modo teste: busca em jMockBd com chave composta
+//     "<cAlias>#<nOrder>#<cKey>" - mockado via u_tecMkBdSeek.
+//
+// Mantem tambem u_tecBuscaCli(cCgc) como helper de SA1 (compat).
+//==============================================================================
+
+user function tecDbSeekFld(cAlias as character, nOrder as numeric, cKey as character, cFld as character)
+    local cRet := ""
+    local cMockKey, jRow, nIdx
+
+    DEFAULT cAlias := ""
+    DEFAULT nOrder := 1
+    DEFAULT cKey   := ""
+    DEFAULT cFld   := ""
+
+    if lModoTst
+        cMockKey := cAlias + "#" + cValToChar(nOrder) + "#" + AllTrim(cKey)
+        if jMockBd != nil .and. jMockBd:hasProperty(cMockKey)
+            jRow := jMockBd[cMockKey]
+            if jRow:hasProperty(cFld)
+                cRet := jRow[cFld]
+            endif
+        endif
+        return cRet
+    endif
+
+    DbSelectArea(cAlias)
+    DbSetOrder(nOrder)
+    if DbSeek(cKey)
+        nIdx := FieldPos(cFld)
+        if nIdx > 0
+            cRet := FieldGet(nIdx)
+        endif
+    endif
+return cRet
+
+// Helper SA1 - busca A1_NOME por CGC (xFilial(SA1) + CGC na ordem 3)
+user function tecBuscaCli(cCgc as character)
+    local cRet := ""
+    local aRows, aRow, i
+
+    DEFAULT cCgc := ""
+
+    if lModoTst
+        // Compat com mock antigo: jMockBd["SA1"] como array por CGC
+        if jMockBd != nil .and. jMockBd:hasProperty("SA1")
+            aRows := jMockBd["SA1"]
+            for i := 1 to Len(aRows)
+                aRow := aRows[i]
+                if aRow:hasProperty("A1_CGC") .and. AllTrim(aRow["A1_CGC"]) == AllTrim(cCgc)
+                    cRet := iif(aRow:hasProperty("A1_NOME"), aRow["A1_NOME"], "")
+                    exit
+                endif
+            next i
+        endif
+        // Fallback: tenta via u_tecDbSeekFld (mock por chave composta)
+        if Empty(cRet)
+            cRet := u_tecDbSeekFld("SA1", 3, xFilial("SA1") + cCgc, "A1_NOME")
+        endif
+        return cRet
+    endif
+return u_tecDbSeekFld("SA1", 3, xFilial("SA1") + cCgc, "A1_NOME")
+
+//==============================================================================
+// 1.5) WRAPPERS DE DOMINIO (issue #14) - SE1 / SC5 / SC6
+//
+// Campos e chaves validados contra o dicionario padrao TOTVS (SIX ordem 1):
+//   SE1: E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+//   SC5: C5_FILIAL+C5_NUM
+//   SC6: C6_FILIAL+C6_NUM+C6_ITEM+C6_PRODUTO
+//
+// Em modo teste, leem linhas seedadas via u_tecMkBdSeed("SE1"/"SC5"/"SC6", aRows)
+// com match por AllTrim dos campos-chave. Em prod, DbSeek com PadR(TamSX3).
+//==============================================================================
+
+// Le campo de uma linha mock com default por ausencia
+static function wDomGet(jRow, cFld, xDef)
+    if jRow != nil .and. jRow:hasProperty(cFld)
+        return jRow[cFld]
+    endif
+return xDef
+
+// Linhas seedadas de um alias (array vazio se sem seed / fora de modo teste)
+static function wDomRows(cAlias)
+    if jMockBd != nil .and. jMockBd:hasProperty(cAlias)
+        return jMockBd[cAlias]
+    endif
+return {}
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecBuscaTitulo
+Busca titulo a receber (SE1) pela chave da ordem 1 (sem filial - aplicada
+internamente via xFilial). Retorna nil quando nao encontrado.
+
+@param cPrefixo character - E1_PREFIXO
+@param cNum     character - E1_NUM
+@param cParcela character - E1_PARCELA
+@param cTipo    character - E1_TIPO
+@return JsonObject { valor (N), vencimento (D), status (C = E1_STATUS),
+        baixa (D), saldo (N) } ou nil
+
+Exemplo (teste):
+  u_tecMkBdSeed("SE1", { u_tecMkRow({{"E1_PREFIXO","001"}, {"E1_NUM","000000001"}, ;
+      {"E1_PARCELA","A"}, {"E1_TIPO","NF"}, {"E1_VALOR",1500.50}}) })
+  jTit := u_tecBuscaTitulo("001", "000000001", "A", "NF")
+/*/
+//------------------------------------------------------------------------------
+user function tecBuscaTitulo(cPrefixo as character, cNum as character, cParcela as character, cTipo as character)
+    local jRet := nil
+    local aRows, jRow, i
+
+    DEFAULT cPrefixo := ""
+    DEFAULT cNum     := ""
+    DEFAULT cParcela := ""
+    DEFAULT cTipo    := ""
+
+    if lModoTst
+        aRows := wDomRows("SE1")
+        for i := 1 to Len(aRows)
+            jRow := aRows[i]
+            if AllTrim(wDomGet(jRow, "E1_PREFIXO", "")) == AllTrim(cPrefixo) ;
+               .and. AllTrim(wDomGet(jRow, "E1_NUM", ""))     == AllTrim(cNum) ;
+               .and. AllTrim(wDomGet(jRow, "E1_PARCELA", "")) == AllTrim(cParcela) ;
+               .and. AllTrim(wDomGet(jRow, "E1_TIPO", ""))    == AllTrim(cTipo)
+                jRet := wMontaTit(jRow)
+                exit
+            endif
+        next i
+        return jRet
+    endif
+
+    DbSelectArea("SE1")
+    DbSetOrder(1)   // E1_FILIAL+E1_PREFIXO+E1_NUM+E1_PARCELA+E1_TIPO
+    if DbSeek(xFilial("SE1") + PadR(AllTrim(cPrefixo), TamSX3("E1_PREFIXO")[1]) ;
+                             + PadR(AllTrim(cNum),     TamSX3("E1_NUM")[1]) ;
+                             + PadR(AllTrim(cParcela), TamSX3("E1_PARCELA")[1]) ;
+                             + PadR(AllTrim(cTipo),    TamSX3("E1_TIPO")[1]))
+        jRet := JsonObject():new()
+        jRet["valor"]      := SE1->E1_VALOR
+        jRet["vencimento"] := SE1->E1_VENCTO
+        jRet["status"]     := AllTrim(SE1->E1_STATUS)
+        jRet["baixa"]      := SE1->E1_BAIXA
+        jRet["saldo"]      := SE1->E1_SALDO
+    endif
+return jRet
+
+// Monta o retorno do titulo a partir de uma linha mock (defaults neutros)
+static function wMontaTit(jRow)
+    local jRet := JsonObject():new()
+    jRet["valor"]      := wDomGet(jRow, "E1_VALOR",  0)
+    jRet["vencimento"] := wDomGet(jRow, "E1_VENCTO", CToD(""))
+    jRet["status"]     := AllTrim(wDomGet(jRow, "E1_STATUS", ""))
+    jRet["baixa"]      := wDomGet(jRow, "E1_BAIXA",  CToD(""))
+    jRet["saldo"]      := wDomGet(jRow, "E1_SALDO",  0)
+return jRet
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecBuscaPedido
+Busca cabecalho de pedido de venda (SC5) por numero. Retorna nil quando nao
+encontrado. `valor_total` e a SOMA dos itens (C6_VALOR) - o SC5 padrao nao tem
+campo de total. `status` segue a convencao PADRAO do Protheus (nao e regra de
+cliente): "faturado" (C5_NOTA preenchida) > "liberado" (C5_LIBEROK == 'S') >
+"aberto".
+
+@param cNum character - C5_NUM
+@return JsonObject { cliente (C), loja (C), valor_total (N), status (C),
+        nota (C = C5_NOTA) } ou nil
+/*/
+//------------------------------------------------------------------------------
+user function tecBuscaPedido(cNum as character)
+    local jRet := nil
+    local aRows, jRow, aItens, i
+    local cNota := "" as character
+    local cLib  := "" as character
+    local nTot  := 0 as numeric
+
+    DEFAULT cNum := ""
+
+    if lModoTst
+        aRows := wDomRows("SC5")
+        for i := 1 to Len(aRows)
+            if AllTrim(wDomGet(aRows[i], "C5_NUM", "")) == AllTrim(cNum)
+                jRow := aRows[i]
+                exit
+            endif
+        next i
+        if jRow == nil
+            return nil
+        endif
+        cNota := AllTrim(wDomGet(jRow, "C5_NOTA", ""))
+        cLib  := AllTrim(wDomGet(jRow, "C5_LIBEROK", ""))
+        jRet := JsonObject():new()
+        jRet["cliente"] := wDomGet(jRow, "C5_CLIENTE", "")
+        jRet["loja"]    := wDomGet(jRow, "C5_LOJACLI", "")
+    else
+        DbSelectArea("SC5")
+        DbSetOrder(1)   // C5_FILIAL+C5_NUM
+        if !DbSeek(xFilial("SC5") + PadR(AllTrim(cNum), TamSX3("C5_NUM")[1]))
+            return nil
+        endif
+        cNota := AllTrim(SC5->C5_NOTA)
+        cLib  := AllTrim(SC5->C5_LIBEROK)
+        jRet := JsonObject():new()
+        jRet["cliente"] := SC5->C5_CLIENTE
+        jRet["loja"]    := SC5->C5_LOJACLI
+    endif
+
+    aItens := u_tecBuscaItensPedido(cNum)
+    for i := 1 to Len(aItens)
+        nTot += aItens[i]["valor"]
+    next i
+
+    jRet["valor_total"] := nTot
+    jRet["nota"]        := cNota
+    jRet["status"]      := iif(!Empty(cNota), "faturado", iif(cLib == "S", "liberado", "aberto"))
+return jRet
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecBuscaItensPedido
+Itens (SC6) de um pedido de venda. Retorna array (vazio se pedido sem itens).
+
+@param cNum character - C6_NUM
+@return array de JsonObject { item (C), produto (C), qtd (N), valor (N) }
+/*/
+//------------------------------------------------------------------------------
+user function tecBuscaItensPedido(cNum as character)
+    local aRet := {}
+    local aRows, jRow, i
+
+    DEFAULT cNum := ""
+
+    if lModoTst
+        aRows := wDomRows("SC6")
+        for i := 1 to Len(aRows)
+            jRow := aRows[i]
+            if AllTrim(wDomGet(jRow, "C6_NUM", "")) == AllTrim(cNum)
+                AAdd(aRet, wMontaItem(wDomGet(jRow, "C6_ITEM", ""), wDomGet(jRow, "C6_PRODUTO", ""), ;
+                                      wDomGet(jRow, "C6_QTDVEN", 0), wDomGet(jRow, "C6_VALOR", 0)))
+            endif
+        next i
+        return aRet
+    endif
+
+    DbSelectArea("SC6")
+    DbSetOrder(1)   // C6_FILIAL+C6_NUM+C6_ITEM+C6_PRODUTO
+    DbSeek(xFilial("SC6") + PadR(AllTrim(cNum), TamSX3("C6_NUM")[1]), .T.)
+    while !Eof() .and. SC6->C6_FILIAL == xFilial("SC6") ;
+          .and. AllTrim(SC6->C6_NUM) == AllTrim(cNum)
+        AAdd(aRet, wMontaItem(SC6->C6_ITEM, AllTrim(SC6->C6_PRODUTO), SC6->C6_QTDVEN, SC6->C6_VALOR))
+        DbSkip()
+    enddo
+return aRet
+
+static function wMontaItem(cItem, cProduto, nQtd, nValor)
+    local jItem := JsonObject():new()
+    jItem["item"]    := cItem
+    jItem["produto"] := cProduto
+    jItem["qtd"]     := nQtd
+    jItem["valor"]   := nValor
+return jItem
+
+//==============================================================================
+// 2) WRAPPER DE PARAMETROS (GetMv)
+//==============================================================================
+user function tecGetMv(cParam as character, xDefault)
+    DEFAULT cParam := ""
+
+    if lModoTst
+        if jMockMv != nil .and. jMockMv:hasProperty(cParam)
+            return jMockMv[cParam]
+        endif
+        return xDefault
+    endif
+return GetNewPar(cParam, xDefault)
+
+//==============================================================================
+// 2.1) WRAPPER DE SQL GENERICO (TCQuery)
+//
+// u_tecQryFirst(cSql) -> JsonObject ou nil
+//   Em modo teste: retorna primeira linha mockada via u_tecMkSql(cSql, aRows).
+//   Em prod: TCQuery + DbUseArea TOPCONN, converte campos para JsonObject.
+//
+// u_tecQryAll(cSql) -> array de JsonObject
+//   Idem mas retorna todas as linhas. Array vazio se nada.
+//==============================================================================
+
+user function tecQryFirst(cSql as character)
+    local jRet, aRows, cAlias, i
+
+    DEFAULT cSql := ""
+
+    if lModoTst
+        aRows := u_tecWMockSqlLookup(cSql)
+        return iif(Len(aRows) > 0, aRows[1], nil)
+    endif
+
+    cAlias := "QRYTMP" + StrTran(Time(), ":", "")
+    DbUseArea(.T., "TOPCONN", TcGenQry(,, cSql), cAlias, .F., .T.)
+    DbSelectArea(cAlias)
+
+    if Eof()
+        DbCloseArea()
+        return nil
+    endif
+
+    jRet := JsonObject():new()
+    for i := 1 to FCount()
+        jRet[FieldName(i)] := FieldGet(i)
+    next i
+    DbCloseArea()
+return jRet
+
+user function tecQryAll(cSql as character)
+    local aRet := {}
+    local jRow, cAlias, i
+
+    DEFAULT cSql := ""
+
+    if lModoTst
+        return u_tecWMockSqlLookup(cSql)
+    endif
+
+    cAlias := "QRYTMP" + StrTran(Time(), ":", "")
+    DbUseArea(.T., "TOPCONN", TcGenQry(,, cSql), cAlias, .F., .T.)
+    DbSelectArea(cAlias)
+
+    while !Eof()
+        jRow := JsonObject():new()
+        for i := 1 to FCount()
+            jRow[FieldName(i)] := FieldGet(i)
+        next i
+        AAdd(aRet, jRow)
+        DbSkip()
+    enddo
+    DbCloseArea()
+return aRet
+
+//==============================================================================
+// 3) WRAPPER DE HTTP CLIENT (FWRest) - generico
+//
+// u_tecHttpReq(cVerb, cUrl, xBody, aHeaders) -> jResp
+//   cVerb    : "GET" | "POST" | "PUT" | "DELETE"
+//   cUrl     : URL completa (http://host:port/path)
+//   xBody    : string ou JsonObject (ignorado em GET)
+//   aHeaders : array opcional, default {"Content-Type: application/json"}
+//
+// Retorno: { ok, status, body, error }
+//
+// Mock (modo teste): chave do jMockHttp pode ser:
+//   - "<verb> <url>"  -> casa apenas esse verb (ex "GET /api/x")
+//   - "<url>"         -> casa qualquer verb (compat tecHttpPost antigo)
+// Chave especifica (com verb) tem prioridade sobre generica (sem verb).
+//==============================================================================
+user function tecHttpReq(cVerb as character, cUrl as character, xBody, aHeaders)
+    local jRet   := JsonObject():new()
+    local cBody  := ""
+    local cResp, nStatus
+    local cHeaderRet := ""
+    local cHttpErr   := ""
+
+    DEFAULT cVerb    := "GET"
+    DEFAULT cUrl     := ""
+    DEFAULT aHeaders := { "Content-Type: application/json" }
+
+    cVerb := Upper(AllTrim(cVerb))
+
+    if ValType(xBody) == "C"
+        cBody := xBody
+    elseif ValType(xBody) == "O"
+        cBody := xBody:toJson()
+    endif
+
+    if lModoTst
+        return u_tecWMockHttpLookup(cVerb, cUrl)
+    endif
+
+    if !(cVerb $ "GET POST PUT DELETE PATCH")
+        jRet["ok"]     := .F.
+        jRet["status"] := 0
+        jRet["body"]   := ""
+        jRet["error"]  := "verbo_invalido: " + cVerb
+        return jRet
+    endif
+
+    // HTTPQuote: stand-alone (sem instanciar classe), evita deadlock quando
+    // o codigo de teste roda dentro de um endpoint REST e precisa chamar
+    // outro endpoint REST no mesmo AppServer.
+    cResp   := HTTPQuote(cUrl, cVerb, "", cBody, 30, aHeaders, @cHeaderRet)
+    nStatus := HTTPGetStatus(@cHttpErr, .F.)
+
+    if cResp == nil
+        jRet["ok"]     := .F.
+        jRet["status"] := nStatus
+        jRet["body"]   := ""
+        jRet["error"]  := iif(Empty(cHttpErr), "http_falha status=" + cValToChar(nStatus), cHttpErr)
+        return jRet
+    endif
+
+    jRet["ok"]     := (nStatus >= 200 .and. nStatus < 300)
+    jRet["status"] := nStatus
+    jRet["body"]   := cResp
+    jRet["error"]  := iif(jRet["ok"], "", "http_status_" + cValToChar(nStatus) + iif(Empty(cHttpErr), "", ": " + cHttpErr))
+return jRet
+
+// Compat: tecHttpPost delega pro generico (mantem API antiga)
+user function tecHttpPost(cUrl as character, cBody as character, aHead)
+    DEFAULT aHead := { "Content-Type: application/json" }
+return u_tecHttpReq("POST", cUrl, cBody, aHead)
+
+//==============================================================================
+// 4) WRAPPER DE TEMPO
+//==============================================================================
+user function tecHoje()
+    if lModoTst .and. dMockHoje != nil
+        return dMockHoje
+    endif
+return Date()
+
+user function tecHora()
+    if lModoTst .and. !Empty(cMockHora)
+        return cMockHora
+    endif
+return Time()
+
+//==============================================================================
+// GETTERS/SETTERS para mocks (mocks/tecMock.tlpp acessa via estas funcoes)
+//==============================================================================
+user function tecWMockBd()
+return jMockBd
+
+user function tecWMockMv()
+return jMockMv
+
+user function tecWMockHttp()
+return jMockHttp
+
+user function tecWMockSql()
+return jMockSql
+
+// Lookup interno SQL mock - retorna array de rows (vazio se sem mock)
+user function tecWMockSqlLookup(cSql as character)
+    if jMockSql == nil .or. !jMockSql:hasProperty(cSql)
+        return {}
+    endif
+return jMockSql[cSql]
+
+user function tecWSetHoje(dData as date)
+    dMockHoje := dData
+return .T.
+
+user function tecWSetHora(cHora as character)
+    cMockHora := cHora
+return .T.
+
+// Splita URL em [host, path]. Ex: "http://x:1/a/b?q" -> ["http://x:1", "/a/b?q"]
+user function tecWSplitUrl(cUrl as character)
+    local aRet := { "", "/" }
+    local nProto := At("://", cUrl)
+    local cAfterProto, nSlash
+
+    if nProto > 0
+        cAfterProto := Substr(cUrl, nProto + 3)
+        nSlash := At("/", cAfterProto)
+        if nSlash > 0
+            aRet[1] := Substr(cUrl, 1, nProto + 2 + nSlash - 1)
+            aRet[2] := Substr(cAfterProto, nSlash)
+        else
+            aRet[1] := cUrl
+        endif
+    else
+        aRet[1] := cUrl
+    endif
+return aRet
+
+// Lookup interno do mock HTTP: tenta "<verb> <url>" antes de "<url>".
+// Retorna jRet sempre - { ok, status, body, error }.
+user function tecWMockHttpLookup(cVerb as character, cUrl as character)
+    local jRet  := JsonObject():new()
+    local cKey1 := cVerb + " " + cUrl
+    local jMock := nil
+
+    if jMockHttp == nil
+        jRet["ok"]     := .F.
+        jRet["status"] := 0
+        jRet["body"]   := ""
+        jRet["error"]  := "mock_nao_inicializado"
+        return jRet
+    endif
+
+    if jMockHttp:hasProperty(cKey1)
+        jMock := jMockHttp[cKey1]
+    elseif jMockHttp:hasProperty(cUrl)
+        jMock := jMockHttp[cUrl]
+    endif
+
+    if jMock == nil
+        jRet["ok"]     := .F.
+        jRet["status"] := 0
+        jRet["body"]   := ""
+        jRet["error"]  := "mock_nao_configurado: " + cVerb + " " + cUrl
+        return jRet
+    endif
+
+    // ok espelha a semantica de PROD (2xx), nao a existencia do mock (#46):
+    // mock com status 500 tem que dar ok=.F., senao teste de erro passa a toa.
+    jRet["status"] := iif(jMock:hasProperty("status"), jMock["status"], 200)
+    jRet["body"]   := iif(jMock:hasProperty("body"),   jMock["body"],   "")
+    jRet["ok"]     := (jRet["status"] >= 200 .and. jRet["status"] < 300)
+    jRet["error"]  := iif(jRet["ok"], "", "http_status_" + cValToChar(jRet["status"]))
+return jRet

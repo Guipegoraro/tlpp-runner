@@ -1,0 +1,55 @@
+name: validate
+
+# Roda o validate.ps1 do plugin (parse PowerShell + JSON + frontmatter SKILL.md
+# + drift entre raiz canonica e mirror .claude/) e as suites de logica dos
+# scripts do runner. Nada aqui precisa de AppServer/Protheus.
+#
+# windows-latest: validate.ps1 usa caminhos com '\' (acoplado a Windows) e o
+# ambiente de dev e Windows - manter paridade.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # O validate.ps1 roda `claude plugin validate` quando o CLI esta no PATH.
+      # Sem este install o check viraria SKIP e o CI perderia exatamente a
+      # classe de defeito do PR #36 (manifest/hooks/frontmatter fora do schema).
+      - name: Instala Claude Code CLI (schema check do plugin)
+        shell: pwsh
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Plugin validate (parse + JSON + frontmatter + schema + drift)
+        shell: pwsh
+        run: ./scripts/plugin/validate.ps1
+
+      - name: Cache de build - logica (sem AppServer)
+        shell: pwsh
+        run: ./scripts/test/Test-BuildCache.ps1
+
+      - name: Cascade de config - logica (sem AppServer)
+        shell: pwsh
+        run: ./scripts/test/Test-RunnerConfig.ps1
+
+      - name: Alias DBAccess - logica (sem DBAccess)
+        shell: pwsh
+        run: ./scripts/test/Test-DBAccessAlias.ps1
+
+      - name: AppServer REST ini - logica (sem AppServer)
+        shell: pwsh
+        run: ./scripts/test/Test-AppServerRest.ps1
+
+      # ProtheusRoot falso em $env:TEMP: nao copia os 485MB reais nem sobe
+      # appserver. O unico recurso de verdade e um TcpListener local, pra
+      # provar que a sondagem de porta livre enxerga porta ocupada.
+      - name: Instancia isolada por projeto - logica (sem AppServer)
+        shell: pwsh
+        run: ./scripts/test/Test-IsolatedInstance.ps1
