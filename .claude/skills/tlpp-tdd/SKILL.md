@@ -1,9 +1,9 @@
 ---
 name: tlpp-tdd
-description: Autonomous TDD workflow for ADVPL/TLPP customizations on Protheus. Writes an EXTENSIVE battery of tests (red), implements minimal source (green), refactors safely. Heavy emphasis on systematic edge-case brainstorming via checklist + heuristics BEFORE coding. Operates function-by-function — each `user function tec<Nome>` is a complete unit of tests+code. Use whenever the user asks for "criar feature", "nova funcao TLPP", "TDD para X", "implementar funcao em TLPP", "tdd autonomo", or variants — and proactively when the user is implementing a new ADVPL/TLPP function and hasn't asked for TDD explicitly.
+description: Use when a new ADVPL/TLPP function or customization is going to be written for Protheus and the tests should come first — "criar feature", "nova funcao TLPP", "TDD para X", "implementar funcao em TLPP". Use also when the user grants the toolchain by name instead of naming an action ("pode usar o tlpp runner nesse projeto"), which is the entry point that routes to tlpp-build, tlpp-test, tlpp-tdd-project-init or tlpp-tdd-setup. Use proactively when the user starts implementing an ADVPL/TLPP function without mentioning tests.
 ---
 
-You are inside the `tlpp-runner` project. The unit of work is **ONE TLPP function at a time** (`user function tec<Nome>`). For each target function the cycle is:
+The unit of work is **ONE TLPP function at a time** (`user function <prefixo><Nome>`). For each target function the cycle is:
 
 1. **Understand** the function (signature, dependencies, contract)
 2. **Systematic brainstorm** of test cases before coding (critical — do not skip)
@@ -12,6 +12,41 @@ You are inside the `tlpp-runner` project. The unit of work is **ONE TLPP functio
 5. **Refactor** with regression guard
 
 **Do not stop at the first failure.** Iterate until every case is green or until the user aborts.
+
+## Where you are running (read this before touching paths)
+
+This skill runs in TWO different contexts. Decide which one you are in before writing a single path:
+
+- **Consumer project** (the normal case): any ADVPL/TLPP repo that has the `tlpp-tdd`
+  plugin installed. The runner scripts live under `$env:CLAUDE_PLUGIN_ROOT\runner`,
+  never in `.\runner`. Folder layout and the function-name prefix are **whatever
+  the project already uses** — read the repo before assuming. If the project has no
+  test folders yet, propose a layout instead of inventing one silently.
+- **The `tlpp-runner` dev repo itself**: `.\runner` exists, and the conventions below
+  (`tec` prefix, `src/`, `test/unit/`, `test/integracao/`) are literal.
+
+Every `tec<Nome>` in the examples below is the **tlpp-runner repo's** prefix, used
+here to keep the samples concrete. In a consumer project substitute the project's
+own prefix and paths. Getting this wrong produces sources nobody can find and a
+`u_` function name that does not match the customer's standard.
+
+If the project has integration tests but no `.tlpp-tdd.json`, stop and run the
+`tlpp-tdd-project-init` skill first — there is no test database otherwise.
+
+## Routing (when the user named the toolchain, not a task)
+
+The user says "pode usar o tlpp runner nesse projeto" — a grant, not a task. Read the
+repo, then hand off:
+
+| What you find | Go to |
+|---|---|
+| No `.tlpp-tdd.json` and the work needs a database | `tlpp-tdd-project-init` |
+| `~/.claude/tlpp-tdd/config.ps1` missing, or the runner answers HTTP 0 | `tlpp-tdd-setup` |
+| A source to get into the RPO, nothing to execute | `tlpp-build` |
+| Tests that exist and should run | `tlpp-test` |
+| A function to write from scratch | stay here, start the cycle below |
+
+State which one you picked and why before acting.
 
 ## Language rule (load-bearing)
 

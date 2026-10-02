@@ -1,7 +1,7 @@
 {
   "name": "tlpp-tdd",
   "description": "TDD autonomo para customizacoes ADVPL/TLPP no Protheus - skills + slash commands + scaffold de framework",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "author": {
     "name": "Guilherme Pegoraro",
     "url": "https://github.com/Guipegoraro"

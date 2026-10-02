@@ -123,6 +123,11 @@ Plano:
      - INSERT/SELECT numa tabela Z_TST_*
      - TCUnlink
 
+  8. [Filesystem] Anexar secao "Testes (tlpp-tdd)" em <projectRoot>/CLAUDE.md
+     Razao:    sem isso o projeto fica inicializado mas SEM sinal nenhum de que
+               o toolchain existe - a proxima sessao do Claude nao sabe que
+               pode compilar/rodar teste aqui e nao reconhece "usa o tlpp runner"
+
 Posso iniciar?
 ```
 
@@ -221,6 +226,37 @@ $runner = if ($env:CLAUDE_PLUGIN_ROOT) { "$env:CLAUDE_PLUGIN_ROOT\runner" } else
 # Se result=.F., olhar console.log do AppServer (linhas [smk-proj-init])
 ```
 
+### 8. CLAUDE.md do projeto (contexto passivo — nao pule)
+
+O `.tlpp-tdd.json` configura o runner, mas **nao ensina nada ao agente**. Sem uma
+linha no `CLAUDE.md` do projeto, a proxima sessao abre sem saber que existe
+toolchain de teste aqui — e uma frase como *"pode usar o tlpp runner nesse projeto"*
+nao casa com nada, porque o plugin se chama `tlpp-tdd` e o usuario chama de
+"tlpp runner". Esse foi um caso real.
+
+Anexe (nao sobrescreva) ao `<projectRoot>/CLAUDE.md`, criando o arquivo se nao existir:
+
+```markdown
+## Testes (tlpp-tdd / tlpp-runner)
+
+Este projeto usa o plugin **`tlpp-tdd`** (tambem chamado de **"tlpp runner"**) pra
+compilar e rodar teste de ADVPL/TLPP sem TDS-VSCode aberto.
+
+- Config: `.tlpp-tdd.json` (name=`<NOME>`, banco de teste `PROTHEUS_TST_<NOME>`)
+- Compilar: skill `tlpp-build` ou `/tlpp-build <arquivo>`
+- Rodar teste: skill `tlpp-test` ou `/tlpp-test <u_funcao>`
+- Escrever bateria de teste nova: skill `tlpp-tdd`
+- Ambiente quebrado (HTTP 0, `funcao_nao_existe`, advpls sumido): skill `tlpp-tdd-setup`
+
+Compilacao e **sempre explicita** — nao ha hook de build automatico. Toda
+compilacao reinicia o HTTPREST por 37-93s.
+
+Nao declare teste passando sem a linha `result=.T.` na saida do runner.
+```
+
+Se ja existir uma secao com esse titulo, atualize os valores em vez de duplicar.
+Substitua `<NOME>` pelo nome real e ajuste a linha do isolamento se `$isolar`.
+
 ## Phase 4 — Relatorio final
 
 ```
@@ -229,6 +265,7 @@ $runner = if ($env:CLAUDE_PLUGIN_ROOT) { "$env:CLAUDE_PLUGIN_ROOT\runner" } else
 Banco:        PROTHEUS_TST_<NOME>
 Alias:        MSSQL/PROTHEUS_TST_<NOME>
 Config:       <projectRoot>/.tlpp-tdd.json
+CLAUDE.md:    secao "Testes (tlpp-tdd / tlpp-runner)" <criada | atualizada>
 
 Isolamento:   <nao (usa AppServer dev 8401) | SIM>
   (se sim)    environment:  <NOME>
@@ -276,6 +313,7 @@ Se rodar de novo:
 - Banco ja existe -> skip CREATE, mas garante GRANT
 - Alias ja existe e bate -> skip
 - .tlpp-tdd.json existe com mesmo Name -> skip (Force-flag pra sobrescrever)
+- CLAUDE.md ja tem a secao "Testes (tlpp-tdd" -> atualiza os valores, nao duplica
 - Instancia isolada ja existe -> `New-IsolatedInstance.ps1` reporta e sai sem
   tocar em nada. Com `-Force` regrava o appserver.ini (com backup) e o json,
   reaproveitando as portas ja registradas e PRESERVANDO o custom.rpo compilado
@@ -294,6 +332,8 @@ Se rodar de novo:
 | Esquecer de compilar o framework na instancia nova | `funcao_nao_existe` em todo teste | Passo 1c e obrigatorio quando `$isolar` |
 | Compilar o framework com `-ProjectRoot $PLUGIN_ROOT` | Vai pro RPO compartilhado, nao pro da instancia | `-ProjectRoot $projectRoot -File <fontes do plugin>` |
 | Editar a mao o appserver.ini de OUTRA instancia | Derruba o ambiente do vizinho (ex: DENK) | O script so cria `appserver_<nome>`; nunca toque nos outros |
+| Terminar sem escrever nada no CLAUDE.md do projeto | Projeto inicializado mas a proxima sessao nao sabe que o toolchain existe; "usa o tlpp runner" nao dispara nada | Passo 8 e obrigatorio |
+| Sobrescrever o CLAUDE.md do projeto | Perde as instrucoes que o usuario ja tinha | Sempre ANEXAR secao, nunca reescrever o arquivo |
 
 ## Referencias
 

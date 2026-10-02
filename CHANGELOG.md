@@ -2,6 +2,22 @@
 
 Todos os releases do `tlpp-tdd` (plugin Claude Code) seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [0.4.0] - 2026-08-15
+
+Correcao de descoberta: o plugin se chama `tlpp-tdd`, o usuario chama de "tlpp runner", e a string "tlpp runner" nao existia em NENHUM `name`/`description` de skill ou command. Resultado em campo: sessao nova num projeto consumidor recebeu "pode usar o tlpp runner para esse projeto" e nao reconheceu nada.
+
+### Adicionado
+- **Skills `tlpp-build` e `tlpp-test`**: antes existiam so como slash command. Command o agente nunca invoca sozinho - depende do usuario digitar a barra - entao "roda o teste" / "compila esse fonte" nao disparavam nada proativamente. O conteudo real migrou dos commands pros `SKILL.md`; os commands viraram delegadores finos (mesmo padrao que `tlpp-tdd.md` ja usava), mantendo fonte unica.
+- **Tabela de roteamento no `tlpp-tdd` SKILL**: quando o usuario libera o toolchain pelo nome em vez de pedir uma acao, a skill le o repo e encaminha - sem `.tlpp-tdd.json` e precisa de banco -> `tlpp-tdd-project-init`; runner respondendo HTTP 0 -> `tlpp-tdd-setup`; so compilar -> `tlpp-build`; rodar teste -> `tlpp-test`; funcao nova -> segue o ciclo local.
+- **Secao "Where you are running" no `tlpp-tdd` SKILL**: a primeira linha do arquivo afirmava "You are inside the `tlpp-runner` project", falso em todo projeto consumidor. Agora distingue os dois contextos e avisa que o prefixo `tec` e o layout `src/`+`test/unit/` sao convencao DESTE repo, usados nos exemplos - projeto consumidor substitui pelos seus.
+- **Passo 8 do `tlpp-tdd-project-init`**: anexar a secao "Testes (tlpp-tdd / tlpp-runner)" no `CLAUDE.md` do projeto. O `.tlpp-tdd.json` configura o runner mas nao ensina nada ao agente; sem essa linha o projeto fica inicializado e ainda assim sem sinal passivo de que o toolchain existe. Anexa, nunca sobrescreve; secao ja existente e atualizada, nao duplicada.
+
+### Mudado
+- **Descriptions reescritas** (`tlpp-tdd`, `tlpp-build`, `tlpp-test`) por tres regras: um trigger por branch (a versao intermediaria empilhava 6-9 sinonimos da mesma coisa), description descreve QUANDO usar e nao o que a skill faz (resumo de workflow vira atalho que o agente segue em vez de ler o corpo), e redirecionamento positivo no lugar de `NAO use pra X`. O nome do toolchain vive em UMA skill so - `tlpp-tdd`, o guarda-chuva: quatro descriptions disputando "tlpp runner" seria a mesma falha em escala de corpus.
+
+### Nota de verificacao
+A correcao de gatilho **nao foi verificada em ambiente controlado**. O RED (baseline com as descriptions 0.3.0) nao e rodavel por subagent a partir da sessao que escreveu a skill: o subagent herda o snapshot da lista de skills da sessao pai, entao tanto o inventario falso via prompt quanto a reversao dos arquivos no disco saem contaminados com as descriptions novas. A evidencia disponivel e o relato de campo (0.3.0, sessao real, nao reconheceu) mais 10/10 subagents desta sessao escolhendo `tlpp-tdd` com a description nova presente - sem controle valido, portanto sugestivo e nao conclusivo. Teste real: sessao nova num projeto com a versao anterior instalada, dizer a frase, depois atualizar e repetir.
+
 ## [0.3.0] - 2026-08-06
 
 Release do gate de revisao geral pre-lancamento: 20 achados confirmados, 10 corrigidos aqui (os demais viraram issues #49-#58). Primeira versao considerada pronta pra outros usuarios.
