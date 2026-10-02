@@ -159,7 +159,7 @@ Ultimo a setar vence. Defaults nunca sobrescrevem.
 {
   "name": "MEUPROJ",                       // obrigatorio. Deriva PROTHEUS_TST_MEUPROJ
   "testDb": "PROTHEUS_CUSTOM_NAME",        // opcional. Override do banco derivado
-  "baseUrl": "http://localhost:8402/rest", // opcional. Override do BaseUrl global
+  "baseUrl": "http://127.0.0.1:8402/rest", // opcional. Override do BaseUrl global
   "schemaPath": "sql/schema.sql",          // opcional. Schema SQL versionado do projeto (#21)
   "isolation": {                           // opcional. Instancia dedicada (#34) - ver secao 4.1
     "tcpPort": 1270,
@@ -187,7 +187,8 @@ ambos no banco do cascade (`$TlppRunner.TestDb`). O banco de projeto
 
 Por padrao todos os projetos da maquina compartilham o AppServer dev (RPO e
 portas). Isso e simples e barato, mas tem um custo real: **qualquer compilacao
-derruba o HTTPREST por 37-93s** (#29) — e derruba pra todo mundo. Quem compila
+derruba o HTTPREST** (#29) ate o proximo ciclo do `[ONSTART] RefreshRate` (~13s
+com `RefreshRate=2`, ate ~2 min com 120) — e derruba pra todo mundo. Quem compila
 com frequencia atrapalha quem esta so rodando teste.
 
 O isolamento resolve dando ao projeto uma instancia inteira sua.
@@ -263,7 +264,7 @@ intocaveis.
 
 | Chave | Valor derivado |
 |---|---|
-| `BaseUrl` | `http://localhost:<restPort>/rest` |
+| `BaseUrl` | `http://127.0.0.1:<restPort>/rest` |
 | `Port` | `<tcpPort>` (o advpls compila nela) |
 | `Environment` | `<NAME em maiusculas>` |
 | `RpoCustom` | `<ProtheusRoot>\protheus\apo_<nome>\custom.rpo` |
@@ -291,7 +292,7 @@ Como o RPO da instancia envelhece sozinho quando o plugin e atualizado, o doctor
 ### Compilacao explicita (sem hook de build)
 
 O plugin NAO registra hook de recompilacao ao salvar. Motivo: toda escrita no
-RPO reinicia o HTTPREST por 37-93s (secao Limitacoes), entao compilar a cada
+RPO derruba o HTTPREST por alguns segundos (secao Limitacoes), entao compilar a cada
 Edit/Write penaliza o loop inteiro. O agente decide quando compilar, via
 `/tlpp-build <arquivo>` ou `/tlpp-test` (que compila antes de rodar) - ambos
 passam pelo guard do oraculo RPO/cache e pulam fontes inalterados.
@@ -327,7 +328,8 @@ passam pelo guard do oraculo RPO/cache e pulam fontes inalterados.
 - **`namespace` suprime alias `u_*` global**: arquivos com `namespace x.y.z` registram como `x.y.z.u_funcao` em vez de `u_funcao`. `/runner/exec` nao acha. Solucao: NAO usar namespace em modulos cujas funcoes sao chamadas externamente. Doc em CLAUDE.md > "Estilo TLPP".
 - **`as anytype` nao existe**. Omitir `as` em parametros genericos.
 - **`:= nil as <tipo>`** rejeitado por typing estrito. Inicializar com valor neutro.
-- **Toda compilacao reinicia o HTTPREST por 37-93s** (medido, issue #29). Nao e especifico de `@Get/@Post`: fontes sem annotation derrubam igual, porque o gatilho e a escrita no RPO. `recompile=F` tambem nao evita. Mitigacoes: `Invoke-TlppBuild.ps1` pula fontes ja no RPO com o mesmo conteudo - guard 0 e o oraculo RPO (#33: `u_tecApoStat`/GetAPOInfo compara dataFonte com mtime do disco, por objeto), fallback e o cache local (`runner/BuildCache.ps1`); `-Force` ignora ambos. `Invoke-TlppRunner.ps1` usa backoff assimetrico - espera longa quando a porta aceita conexao (servidor reiniciando), curta quando recusa (AppServer desligado). Compile que FALHA tambem paga a janela (~30s medido) - rollback nao evita.
+- **Toda compilacao derruba o HTTPREST** (issue #29). O AppServer executa "Stopping all HTTP servers"; com `BuildKillUsers=1` o job `HTTP_START` do `[ONSTART]` morre, e o REST so volta no proximo ciclo do `[ONSTART] RefreshRate` - o intervalo em que o AppServer confere e relanca os jobs. O setup (template em `runner/install/IniIO.ps1`, `Set-AppServerRest.ps1`, `New-IsolatedInstance.ps1`) grava `RefreshRate=2`: o build leva ~7-8s e o REST responde ~5s depois do fim dele (janela total ~13s). Ini com `RefreshRate=120` deixa o REST fora ate ~2 min (~92s apos o fim do build); `/tlpp-tdd-setup` (doctor) ou `Set-AppServerRest.ps1` baixa o valor in-place, e o AppServer precisa ser reiniciado. Nao e especifico de `@Get/@Post`: fontes sem annotation derrubam igual, porque o gatilho e a escrita no RPO. `recompile=F` tambem nao evita, e compile que FALHA tambem derruba os HTTP servers. Mitigacoes: `Invoke-TlppBuild.ps1` pula fontes ja no RPO com o mesmo conteudo - guard 0 e o oraculo RPO (#33: `u_tecApoStat`/GetAPOInfo compara dataFonte com mtime do disco, por objeto), fallback e o cache local (`runner/BuildCache.ps1`); `-Force` ignora ambos. `Invoke-TlppRunner.ps1` usa backoff assimetrico - espera ate 180s quando a porta TCP aceita conexao (servidor reiniciando; cobre ini com RefreshRate alto), curta quando recusa (AppServer desligado).
+- **Dois AppServers sobre o mesmo `custom.rpo`** (ex. o de desenvolvimento e o `appserver_rest` abertos juntos): a compilacao falha pelos dois com `COMPILEERROR-300 Failed to open repository ... used by another process`. Quando a falha vem pelo AppServer do REST, os HTTP servers dele ja cairam no inicio do build e so voltam reiniciando o AppServer. `Invoke-TlppBuild.ps1` detecta e imprime o diagnostico.
 - **Mocks so cobrem codigo que passa pelos wrappers** em `tecWrap.tlpp`. Legado com `DbSelectArea`/`FWRest`/`GetMv` direto precisa refactor pra usar wrapper.
 - **`FWRest` chamando proprio AppServer** -> deadlock/crash. Use `u_tecHttpReq` (usa HTTPQuote).
 - **`ValType(JsonObject)` retorna `"J"`** nao `"O"`. Use `:hasProperty()` direto.
@@ -421,7 +423,7 @@ $TlppRunner.AdvplsPath   = "$env:USERPROFILE\.vscode\extensions\totvs.tds-vscode
 ### Endpoint REST direto
 
 ```
-POST http://localhost:8401/rest/runner/exec
+POST http://127.0.0.1:8401/rest/runner/exec
 Authorization: Basic admin:senha
 Content-Type: application/json
 Body: {
@@ -441,15 +443,19 @@ Body: {
 +- "advpls.exe nao encontrado" -> ~/.claude/tlpp-tdd/config.ps1 AdvplsPath errado
 +- "Includes nao encontrado" -> ProtheusRoot errado (deve ter Protheus\include)
 +- "[FATAL] @TestFixture not defined" -> falta #include "tlpp-probat.th"
-+- "COMPILEERROR-300 Failed to open repository" -> RPO lock (debugger TDS aberto, restart AppServer)
++- "COMPILEERROR-300 Failed to open repository" -> RPO lock (debugger TDS aberto, ou
+|    outro AppServer no mesmo custom.rpo -> fechar o outro e reiniciar este)
 +- "Regular functions are not allowed" -> use `user function`/`static function`
 
 /tlpp-test falha?
-+- "connection refused" -> AppServer REST off OU restartando apos compile (espera 5s)
++- "connection refused" -> AppServer REST off OU restartando apos compile
+|    (volta no proximo ciclo do [ONSTART] RefreshRate; o wrapper aguarda)
 +- HTTP 401 -> senha errada em ~/.claude/tlpp-tdd/config.ps1
 +- HTTP 404 funcao_nao_existe -> fonte nao compilou no RPO. Rode /tlpp-build antes
-+- HTTP 500 runtime -> ler console.log do appserver REST
-+- result=.F. -> asserts falharam. Procurar [ASSERT_FAIL] no console.log
++- HTTP 500 error=runtime -> runner imprime message + pilha (fonte e linha) + FAILs
++- HTTP 500 {"code":500,"message":"Internal Server Error"} -> Break() explicito ou
+|    erro que derruba a thread (Empty() sobre JsonObject); so aqui ler console.log
++- result=.F. -> asserts falharam. Ler as linhas "FAIL: ..." da saida do runner
 
 Funcao u_tecCtxXxx nao existe?
 +- Modulo tem `namespace` no topo -> remove ou aceita o nome qualificado `<ns>.u_<func>`

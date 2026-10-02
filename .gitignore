@@ -25,6 +25,7 @@ runner/*.key
 # Configuracao especifica do ambiente local (cada dev tem a sua)
 runner.config.local.ps1
 runner/runner.config.local.ps1
+runner/runner.config.local.ps1.bak*
 
 # Credenciais do REST runner para testes de integracao (cada dev configura)
 test/integracao/tecRunrCfg.tlpp

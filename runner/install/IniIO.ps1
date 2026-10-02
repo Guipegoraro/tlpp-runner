@@ -28,6 +28,13 @@
     Write-IniLines -Path $ini -Lines $linhas
 #>
 
+# Intervalo (s) em que o AppServer confere os jobs do [ONSTART] e relanca os que
+# morreram. Toda compilacao derruba os HTTP servers (BuildKillUsers=1 mata o job
+# HTTP_START), e o REST so volta no proximo ciclo: com 120 a janela medida e de
+# ~92s apos o fim do build, com 10 de ~11s e com 2 de ~5s (o piso e a propria
+# inicializacao do REST). Vale para o template e para o ajuste in-place.
+$script:RestRefreshRate = 2
+
 $script:IniEncoding = [System.Text.Encoding]::GetEncoding(28591)   # Latin1: byte<->char 1:1
 
 function Read-IniLines {
@@ -171,7 +178,7 @@ function New-RestSectionLines {
 
     return [ordered]@{
         'HTTPJOB'  = @('Main=HTTP_START', "Environment=$Environment")
-        'ONSTART'  = @('Jobs=HTTPJOB', 'RefreshRate=120')
+        'ONSTART'  = @('Jobs=HTTPJOB', "RefreshRate=$script:RestRefreshRate")
         'HTTPV11'  = @('Enable=1', 'Sockets=HTTPREST')
         'HTTPREST' = $restLines
         'HTTPURI'  = @('URL=/rest', 'PrepareIn=99,01', 'Instances=1,2', 'AllowOrigin=*', 'CORSEnable=1', 'Stateless=1')

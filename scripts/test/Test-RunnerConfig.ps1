@@ -24,6 +24,12 @@
       R12 isolation + baseUrl expl. -> baseUrl explicito vence o derivado
       R13 isolation sem ProtheusRoot-> portas/environment derivam, paths ficam vazios
 
+    BaseUrl com host localhost (fallback IPv6 custa ~2s por request):
+
+      R14 config global com localhost  -> normalizado para 127.0.0.1
+      R15 baseUrl do json com localhost -> normalizado (porta e path intactos)
+      R16 host que so comeca com "localhost" -> intocado
+
     Sandbox: USERPROFILE temporario (sem config global) + copia do
     runner.config.ps1 (sem runner.config.local.ps1 legacy do repo por perto).
 
@@ -165,7 +171,7 @@ try {
     # R9 - isolation deriva tudo
     $proj = New-Proj 'iso' '{ "name": "ISOPROJ", "isolation": { "tcpPort": 1271, "restPort": 8404, "webAppPort": 8101 } }'
     $cfg = Invoke-Cascade $runnerDir $proj
-    Assert-Equal 'R9 BaseUrl na porta REST da instancia' 'http://localhost:8404/rest' $cfg.BaseUrl
+    Assert-Equal 'R9 BaseUrl na porta REST da instancia' 'http://127.0.0.1:8404/rest' $cfg.BaseUrl
     Assert-Equal 'R9 Port = porta TCP da instancia'      1271 $cfg.Port
     Assert-Equal 'R9 Environment = nome em maiusculas'   'ISOPROJ' $cfg.Environment
     Assert-Equal 'R9 IsolationBinDir'  (Join-Path $fakeProt 'Protheus\bin\appserver_isoproj') $cfg.IsolationBinDir
@@ -178,7 +184,7 @@ try {
     # R10 - projeto SEM isolation nao muda nada (regressao: o gatilho e a chave)
     $proj = New-Proj 'semiso' '{ "name": "SEMISO" }'
     $cfg = Invoke-Cascade $runnerDir $proj
-    Assert-Equal 'R10 sem isolation: BaseUrl default'      'http://localhost:8401/rest' $cfg.BaseUrl
+    Assert-Equal 'R10 sem isolation: BaseUrl default'      'http://127.0.0.1:8401/rest' $cfg.BaseUrl
     Assert-Equal 'R10 sem isolation: Port default'         1268 $cfg.Port
     Assert-Equal 'R10 sem isolation: Environment default'  'DESENVOLVIMENTO' $cfg.Environment
     Assert-Equal 'R10 sem isolation: IsolationBinDir vazio' '' $cfg.IsolationBinDir
@@ -189,7 +195,7 @@ try {
     $proj = New-Proj 'isosemnome' '{ "isolation": { "tcpPort": 1271, "restPort": 8404, "webAppPort": 8101 } }'
     $cfg = Invoke-Cascade $runnerDir $proj
     Assert-Equal 'R11 isolation sem name -> Port default'          1268 $cfg.Port
-    Assert-Equal 'R11 isolation sem name -> BaseUrl default'       'http://localhost:8401/rest' $cfg.BaseUrl
+    Assert-Equal 'R11 isolation sem name -> BaseUrl default'       'http://127.0.0.1:8401/rest' $cfg.BaseUrl
     Assert-Equal 'R11 isolation sem name -> IsolationBinDir vazio' '' $cfg.IsolationBinDir
 
     # R12 - baseUrl explicito no MESMO json vence o derivado do isolamento
@@ -206,6 +212,24 @@ try {
     Assert-Equal 'R13 sem ProtheusRoot: Environment derivado' 'ISOC' $cfg.Environment
     Assert-Equal 'R13 sem ProtheusRoot: IsolationBinDir vazio' '' $cfg.IsolationBinDir
     Assert-Equal 'R13 sem ProtheusRoot: RpoCustom vazio'       '' $cfg.RpoCustom
+
+    # ===== BaseUrl localhost -> 127.0.0.1 =====
+    # R14 - config global gravada com localhost
+    Set-GlobalCfg "`$TlppRunner.BaseUrl = 'http://localhost:8401/rest'"
+    $proj = New-Proj 'normglobal' '{ "name": "NORMG" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R14 global localhost -> 127.0.0.1' 'http://127.0.0.1:8401/rest' $cfg.BaseUrl
+
+    # R15 - baseUrl explicito do json com localhost
+    Set-GlobalCfg $null
+    $proj = New-Proj 'normjson' '{ "name": "NORMJ", "baseUrl": "http://localhost:9001/rest" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R15 json localhost -> 127.0.0.1' 'http://127.0.0.1:9001/rest' $cfg.BaseUrl
+
+    # R16 - so o host exato e trocado
+    $proj = New-Proj 'normhost' '{ "name": "NORMH", "baseUrl": "http://localhost-dev:9002/rest" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R16 host localhost-dev intocado' 'http://localhost-dev:9002/rest' $cfg.BaseUrl
 
     # ===== Classificacao de erro de conexao (backoff do Invoke-TlppRunner) =====
     . (Join-Path $root 'runner\HttpRetry.ps1')

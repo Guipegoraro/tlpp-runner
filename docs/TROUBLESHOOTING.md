@@ -18,27 +18,39 @@ em que categoria cair. Aqui há o porquê e o detalhe.
 
 ### `connection refused` (ou porta 8401 fechada) logo depois de compilar
 
-**Causa.** O HTTPREST está reiniciando. **Toda** compilação derruba o REST por
-**37 a 93 segundos** (medido, issue #29) — e isso vale para **qualquer** fonte, não
-só os que têm `@Get`/`@Post`. O gatilho é a escrita no RPO, que é aberto com **lock
-exclusivo**: para compilar, o AppServer derruba os serviços que o seguram, compila
-e sobe de novo — a maior parte da janela é a espera até o teardown terminar.
-`recompile=F` não evita.
+**Causa.** O HTTPREST está fora pela compilação (issue #29) — e isso vale para
+**qualquer** fonte, não só os que têm `@Get`/`@Post`. O gatilho é a escrita no RPO,
+que é aberto com **lock exclusivo**: para compilar, o AppServer executa "Stopping
+all HTTP servers". Com `BuildKillUsers=1` o job `HTTP_START` do `[ONSTART]` morre
+junto, e o REST só volta no **próximo ciclo do `[ONSTART] RefreshRate`** — o
+intervalo em que o AppServer confere e relança os jobs. `recompile=F` não evita.
+
+Quanto dura depende desse valor no `appserver.ini`:
+
+| `[ONSTART] RefreshRate` | REST de volta após o fim do build |
+|---|---|
+| `2` (o que o setup grava: template de `IniIO.ps1`, `Set-AppServerRest.ps1`, `New-IsolatedInstance.ps1`) | ~5 s (build ~7-8 s, janela total ~13 s) |
+| `120` (valor comum em ini antigo) | até ~2 min (~92 s medido) |
 
 Dois corolários que costumam surpreender:
 
-- **Compile que FALHA também paga a janela** (~30s medido, com fonte de erro e
-  rollback do build). O custo é da tentativa de lock, não do commit. Não existe
-  "testar sintaxe de graça" compilando com erro.
+- **Compile que FALHA também derruba os HTTP servers.** O custo é da tentativa de
+  lock, não do commit. Não existe "testar sintaxe de graça" compilando com erro.
 - **Não existe AppServer "só de compilação" ao lado** do que serve: o segundo
   recebe `Failed to open repository ... used by another process`. Isolar compilação
-  de atendimento exige **RPOs separados**, não instâncias apontando pro mesmo RPO.
+  de atendimento exige **RPOs separados**, não instâncias apontando pro mesmo RPO
+  (veja "RPO aberto por outro AppServer" abaixo).
 
 **Correção.** Nenhuma — é esperado. **Não retente na mão.** O
-`Invoke-TlppRunner.ps1` já aguarda com backoff assimétrico: espera longa quando a
-porta TCP do AppServer aceita conexão (servidor reiniciando), curta quando recusa
-(processo morto). Enquanto ele imprime `REST reiniciando`, está tudo normal: a porta
-REST fica fechada a janela inteira, é assim mesmo.
+`Invoke-TlppRunner.ps1` já aguarda com backoff assimétrico: espera de até 180 s
+quando a porta TCP do AppServer aceita conexão (servidor reiniciando — cobre ini
+com `RefreshRate` alto), curta quando recusa (processo morto). Enquanto ele imprime
+`REST reiniciando`, está tudo normal: a porta REST fica fechada a janela inteira, é
+assim mesmo.
+
+Se cada compilação deixa o REST fora por ~1-2 min, o `appserver.ini` está com
+`RefreshRate` alto: rode `/tlpp-tdd-setup` (doctor) ou `Set-AppServerRest.ps1`
+(aceita `-DryRun`), que baixa o valor in-place, e reinicie o AppServer.
 
 **Como reduzir a exposição.** Com `isolation` no `.tlpp-tdd.json` (#34) a janela
 passa a ser **por instância** — compilar no seu projeto não derruba o REST dos
@@ -56,7 +68,7 @@ seções 2 e 6 abaixo.
 
 **Isto é sucesso, não falha.** O oráculo RPO (#33) perguntou ao AppServer o
 `dataFonte` de cada objeto e concluiu que o RPO já tem exatamente esse conteúdo.
-Compilar à toa custaria 37-93s de REST fora do ar sem ganho nenhum.
+Compilar à toa deixaria o REST fora do ar por uma janela de restart sem ganho nenhum.
 
 **Não force recompilação por conta própria.** O cache invalida sozinho quando o
 conteúdo muda. `-Force` existe, mas usar sem motivo é autossabotagem.
@@ -74,6 +86,23 @@ conteúdo muda. `-Force` existe, mas usar sem motivo é autossabotagem.
 `[General]` do `appserver.ini` ajuda com sessões que podem ser mortas, mas **não**
 mata sessão de debugger. Instância isolada (#34) tem RPO próprio — é a solução
 estrutural quando duas frentes compilam na mesma máquina.
+
+### RPO aberto por outro AppServer: `COMPILEERROR-300` e o REST não volta
+
+**Sintoma.** O build falha com `COMPILEERROR-300 Failed to open repository ... used
+by another process`, o `Invoke-TlppBuild.ps1` imprime `[build] o RPO esta aberto
+por OUTRO AppServer (mesmo custom.rpo)`, e depois disso o `/runner/*` fica em
+`connection refused` indefinidamente.
+
+**Causa.** Dois AppServers abertos sobre o mesmo `custom.rpo` (ex.: um de
+desenvolvimento e o `appserver_rest` juntos). Só um processo por vez escreve no
+RPO, então a compilação falha pelos dois. Quando a falha vem pelo AppServer do
+REST, ele já executou "Stopping all HTTP servers" no início do build e não os
+religa.
+
+**Correção.** Feche o outro AppServer e **reinicie** o do REST — sem o restart os
+HTTP servers não voltam. Para manter duas instâncias vivas na mesma máquina, cada
+uma precisa de RPO próprio (instância isolada, #34).
 
 ### `Regular functions are not allowed`
 
@@ -189,8 +218,8 @@ AppServer REST.
 
 **Causa.** A função pedida não está no RPO. Duas origens:
 
-1. **O fonte não compilou.** Rode `/tlpp-build` (ou salve o arquivo, que dispara o
-   hook) e confira `[SUCCESS] ... compiled successfully`.
+1. **O fonte não compilou.** Rode `/tlpp-build` e confira
+   `[SUCCESS] ... compiled successfully`.
 2. **O módulo tem `namespace` no topo.** `user function foo` sem namespace registra
    `u_foo` global; **com** `namespace bar`, registra `bar.u_foo` — e o `/runner/exec`
    não acha `u_foo`. Vale para qualquer função chamada por nome (`tlpp.ffunc`,
@@ -199,54 +228,83 @@ AppServer REST.
 **Correção.** Compile, ou remova o `namespace` do módulo (ou aceite e chame pelo
 nome qualificado).
 
+### HTTP 400 `{"error":"body_vazio"}` / `json_invalido` / `function_obrigatoria`
+
+**Causa.** Requisição malformada para o `/runner/exec` (ou `name_obrigatorio` no
+`/runner/func`): corpo vazio, JSON que não faz parse, ou sem a chave `function`. O
+código vem no corpo JSON da resposta, que o runner imprime depois de `[runner] HTTP 400`.
+
+**Correção.** Confira o `-Function`/`-ArgString` passado, ou o body se estiver
+chamando o endpoint direto.
+
+### HTTP 500 `{"error":"runtime",...}` — `u_x: ERRO <mensagem>`
+
+**Causa.** Erro de execução dentro da função chamada (type mismatch, variável
+inexistente, chamada a função que não está no RPO...). O endpoint captura o erro e
+devolve HTTP 500 com
+`{"error":"runtime","function","argString","message","stack","duration","asserts"?}`.
+A pilha aponta o fonte e a linha da função chamada. O runner imprime a mensagem, as
+primeiras linhas da pilha e os `FAIL` registrados até o erro:
+
+```
+[runner] HTTP 500
+u_tecPrbCrash: ERRO type mismatch on +
+  type mismatch on +  on U_TECPRBCRASH(TECPRBEXEC.TLPP) ... line : 23
+  ...
+```
+
+Durante TDD, a função-alvo que ainda não existe no RPO, chamada de dentro do teste,
+cai aqui: é o **vermelho esperado**.
+
+**Correção.** Vá ao fonte e à linha que a pilha indica. Não é preciso abrir o
+`console.log`.
+
 ### HTTP 500 `{"code":500,"message":"Internal Server Error"}` (genérico)
 
-**Causa.** Erro **fatal na thread**, não capturado pelo `RECOVER` do endpoint — a
-thread morre e a camada REST devolve o 500 genérico. Culpados frequentes:
+**Causa.** `Break("...")` explícito no código chamado, ou erro que derruba a thread
+inteira antes do `catch` (ex.: `Empty()` sobre JsonObject, seção 5). Os dois escapam
+do tratamento do endpoint e voltam como o 500 genérico do tlppCore, sem mensagem
+nem pilha.
 
-- **Chamada a função que não existe no RPO, de dentro** da função que você executou.
-  No `console.log`:
-  `InterFunctionCall: cannot find function U_MINHAFUNC in AppMap on TLPP.CALL(TLPP_FUNCTIONS.TLPP)`.
-  Durante TDD isso é o **vermelho esperado**: o teste existe, a função-alvo ainda não.
-- **`Empty(JsonObject)`** — crasha a thread (veja seção 5).
-- **`FWRest` apontando para o próprio AppServer** — deadlock/crash. Use
-  `u_tecHttpReq`, que usa `HTTPQuote` stand-alone.
-
-**Correção.** Sempre leia o `console.log`; o 500 genérico não diz nada por si:
+**Correção.** Aqui, e só aqui, o detalhe está no log do AppServer:
 
 ```powershell
 . "$env:CLAUDE_PLUGIN_ROOT\runner\runner.config.ps1"
 Get-Content $TlppRunner.ConsoleLogPath -Tail 40
 ```
 
-> Distinga do outro 500: quando o erro **é** capturado, a resposta traz
-> `{"error":"runtime","function":...,"message":...}` com a mensagem do TLPP. Esse já
-> vem diagnosticado.
+(o `error.log` do AppServer também registra a ocorrência).
+
+> **`FWRest` apontando para o próprio AppServer** não produz nenhum dos dois: é
+> deadlock/crash. Use `u_tecHttpReq`, que usa `HTTPQuote` stand-alone.
 
 ### `result=.F.` e você não sabe qual assert falhou
 
-**Causa.** Nenhuma — é o fluxo normal. O detalhe está no `ConOut`.
+**Causa.** Nenhuma — é o fluxo normal. A resposta do `/runner/exec` traz o campo
+`asserts` (`u_tecAssertSummary()`: `ok`, `passed`, `failed`, `fails[]`), e o runner
+imprime o placar e uma linha por falha.
 
-**Correção.**
-
-```powershell
-. "$env:CLAUDE_PLUGIN_ROOT\runner\runner.config.ps1"
-Get-Content $TlppRunner.ConsoleLogPath -Tail 30 | Select-String 'ASSERT_FAIL'
-```
-
-A linha tem a descrição que você escreveu mais o detalhe por tipo, por exemplo:
+**Correção.** Leia a saída do `/tlpp-test`:
 
 ```
-[ASSERT_FAIL] programs vazio | expected=<empty> actual=<J>
+u_test_x: result=.F. dur=0.002s asserts=1ok/2fail
+  FAIL: soma errada | expected=3 actual=2
+  FAIL: programs vazio | expected=<empty> actual=<J>
 ```
 
-### `result=.F.` sem nenhum `[ASSERT_FAIL]` no log
+Cada `FAIL` tem a descrição que você escreveu mais o detalhe por tipo. O
+`console.log` recebe as mesmas linhas como `[ASSERT_OK]`/`[ASSERT_FAIL]` via
+`ConOut` — complemento para ver a ordem de execução, não o caminho principal.
 
-**Causa.** O teste não executou nenhum assert. `u_tecAssertsOk()` devolve `.T.` só
-se `falhas == 0` **e** `ok > 0` — teste que não afirma nada reprova de propósito.
-Costuma ser `return` antecipado, ou exceção antes do primeiro assert.
+### `result=.F.` sem placar `asserts=` nem linha `FAIL`
 
-**Correção.** Confira o fluxo do teste; se houve exceção, ela está no `console.log`.
+**Causa.** O teste não executou nenhum assert — o campo `asserts` só vem na resposta
+quando a chamada registrou ao menos um. `u_tecAssertsOk()` devolve `.T.` só se
+`falhas == 0` **e** `ok > 0`: teste que não afirma nada reprova de propósito.
+Costuma ser `return` antecipado antes do primeiro assert.
+
+**Correção.** Confira o fluxo do teste. Se houve erro de execução, a resposta é o
+500 `error=runtime` acima, com a pilha.
 
 ### `result=.T.` suspeito (teste que passou de primeira)
 
@@ -334,8 +392,10 @@ Tabela nova reutilizável: `/tlpp-table create <nome> "<cols>"`.
 
 ### `Empty(JsonObject)` crasha a thread
 
-**Causa.** `Empty()` não suporta JsonObject/array em TLPP; o resultado é morte da
-thread (e HTTP 500 genérico, veja seção 3).
+**Causa.** `Empty()` não suporta JsonObject em TLPP e derruba a thread inteira:
+o `catch` do `/runner/exec` não chega a rodar e a resposta é o 500 genérico do
+tlppCore (`{"code":500,"message":"Internal Server Error"}`), sem mensagem nem
+pilha. O detalhe fica só no `console.log` (veja a seção 3).
 
 **Correção.** Use `u_tecAssertEmpty` / `u_tecAssertNotEmpty`, que são tipo-aware —
 para JsonObject decidem por `Len(xVal:GetNames()) == 0`. Em código de produção, use

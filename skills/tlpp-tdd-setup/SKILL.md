@@ -81,6 +81,7 @@ try {
 - BROKEN: HTTP 0 / connection refused -> AppServer nao esta rodando. Instrucoes pro user iniciar manualmente (path em `$gcfg.AppServerIniPath` se setado).
 - BROKEN: HTTP 401/403 -> senha errada. Re-pergunta admin password.
 - BROKEN: HTTP 404 ou outro -> `[HTTPREST]` nao configurado no `.ini`. Roda `Set-AppServerRest.ps1`.
+- OK, mas `[ONSTART] RefreshRate` acima de 2 no `appserver.ini` (`$gcfg.AppServerIniPath`) -> roda `Set-AppServerRest.ps1 -DryRun` e depois sem `-DryRun`: ele baixa o valor in-place. Com 120 o REST fica ~2 min fora depois de cada compilacao; com 2, ~5s. Pede restart do AppServer.
 
 **7. Framework compilado no RPO**
 ```powershell
@@ -314,7 +315,7 @@ Pede restart do AppServer.
     AdvplsPath       = $envInfo.Tds.AdvplsPath
     Server           = 'localhost'
     Port             = $compilePort         # porta TCP [GENERAL] do AppServer reusado (modo A)
-    BaseUrl          = "http://localhost:${restPort}/rest"
+    BaseUrl          = "http://127.0.0.1:${restPort}/rest"   # localhost paga ~2s/request no fallback IPv6
     Environment      = 'DESENVOLVIMENTO'
     SqlInstance      = ($envInfo.Sql.Instances | Where-Object { $_.Status -eq 'Running' } | Select-Object -First 1).Instance
     DbAccessHost     = 'localhost'

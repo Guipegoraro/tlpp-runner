@@ -53,7 +53,8 @@ Quer uma instancia AppServer DEDICADA pra este projeto?
 
   [N] Nao (default) - usa o AppServer dev compartilhado (8401).
       Simples, zero disco extra. Contra: cada compilacao sua derruba
-      o HTTPREST por 37-93s pra TODOS os projetos da maquina.
+      o HTTPREST (~13s, ate ~2 min com RefreshRate alto) pra TODOS
+      os projetos da maquina.
 
   [S] Sim - instancia propria: RPO, portas e appserver.ini exclusivos.
       Compilar aqui NAO afeta os outros (0 downtime medido).
@@ -249,7 +250,8 @@ compilar e rodar teste de ADVPL/TLPP sem TDS-VSCode aberto.
 - Ambiente quebrado (HTTP 0, `funcao_nao_existe`, advpls sumido): skill `tlpp-tdd-setup`
 
 Compilacao e **sempre explicita** — nao ha hook de build automatico. Toda
-compilacao reinicia o HTTPREST por 37-93s.
+compilacao derruba o HTTPREST ate o proximo ciclo do `[ONSTART] RefreshRate`
+(~13s com `RefreshRate=2`).
 
 Nao declare teste passando sem a linha `result=.T.` na saida do runner.
 ```

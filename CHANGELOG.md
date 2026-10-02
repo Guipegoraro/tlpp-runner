@@ -2,6 +2,25 @@
 
 Todos os releases do `tlpp-tdd` (plugin Claude Code) seguem [Semantic Versioning](https://semver.org/lang/pt-BR/).
 
+## [0.4.1] - 2026-10-02
+
+Correcoes medidas contra o AppServer real ao avaliar o `tds_run` do tds-mcp como transporte alternativo ao REST. A avaliacao concluiu pelo REST: com as correcoes abaixo ele roda um teste em ~10 ms e volta ~5 s depois de cada compilacao, contra 5,5-8 s por chamada do `tds_run` (sem valor de retorno).
+
+### Corrigido
+- **Janela do REST apos compilar: de ~92 s para ~5 s.** A janela nao e a compilacao (~7,5 s): o build derruba os HTTP servers e o job `HTTP_START` so e relancado no proximo ciclo do `[ONSTART] RefreshRate`. O template gravava `RefreshRate=120`; passa a gravar `2` (`IniIO.ps1`, usado por `Set-AppServerRest` e `New-IsolatedInstance`). `Set-AppServerRest` baixa in-place um `RefreshRate` acima de 2 em ini existente, e o doctor do `/tlpp-tdd-setup` aponta o caso. Explica a variacao de 37-93 s medida na #29 (fase do ciclo de 120 s em que a compilacao caia).
+- **~2 s por request ao REST**: `BaseUrl` com `localhost` resolve IPv6 primeiro e o AppServer escuta so IPv4. Padrao vira `http://127.0.0.1:8401/rest`, e `runner.config.ps1` normaliza `localhost` de config global e `.tlpp-tdd.json` ja gravados. `/runner/exec` cai de ~2 s para ~10 ms.
+- **Erro de execucao na funcao testada voltava como sucesso com retorno vazio**: dentro do REST o tlppCore intercepta o `Break`, entao o `BEGIN SEQUENCE` do `tecRunrExec` nunca chegava ao `RECOVER`. Agora `try/catch` + macro: HTTP 500 com `message` e `stack` apontando a linha do fonte chamado (`tlpp.call` so para nome com namespace, que a macro nao resolve).
+- **Respostas de erro do endpoint (400/404/500) chegavam como 500 generico**: os handlers faziam `return .F.`, e o tlppCore descarta o corpo montado nesse caso. Handlers retornam `.T.` com o status em `setStatusCode`.
+- **`Show-Error` do `Invoke-TlppRunner` nao mostrava nada no PowerShell 7** (`GetResponseStream` nao existe em `HttpResponseMessage`): le `ErrorDetails` e formata erro de execucao como mensagem + pilha.
+
+### Adicionado
+- **Falhas de assert na resposta do `/runner/exec`**: campo `asserts` (`u_tecAssertSummary()`: ok, passed, failed, fails[]) quando a chamada registra assert. `-Quiet` imprime `asserts=NokMfail` e uma linha `FAIL:` por falha - nao e mais preciso ler o `console.log`.
+- **`tecRunrToStr` serializa JsonObject** (`toJson()`) em vez de `<J>`.
+- **Diagnostico de `COMPILEERROR-300`** no `Invoke-TlppBuild`: dois AppServers sobre o mesmo `custom.rpo` impedem a compilacao pelos dois, e o AppServer do REST fica sem HTTP ate reiniciar.
+
+### Mudado
+- `.gitignore` cobre `runner/runner.config.local.ps1.bak*`.
+
 ## [0.4.0] - 2026-08-15
 
 Correcao de descoberta: o plugin se chama `tlpp-tdd`, o usuario chama de "tlpp runner", e a string "tlpp runner" nao existia em NENHUM `name`/`description` de skill ou command. Resultado em campo: sessao nova num projeto consumidor recebeu "pode usar o tlpp runner para esse projeto" e nao reconheceu nada.

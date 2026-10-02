@@ -12,7 +12,8 @@
 
 $script:TlppRunner = [ordered]@{
     # ----- REST (Invoke-TlppRunner.ps1) -----
-    BaseUrl  = 'http://localhost:8401/rest'
+    # 127.0.0.1 e nao localhost: ver a normalizacao do BaseUrl no fim do arquivo.
+    BaseUrl  = 'http://127.0.0.1:8401/rest'
     User     = 'admin'
     Password = ''
 
@@ -160,7 +161,7 @@ if ($projIsolation) {
         $script:TlppRunner.IsolationWebApp = $isoWeb
 
         if ($isoTcp  -gt 0) { $script:TlppRunner.Port    = $isoTcp }
-        if ($isoRest -gt 0) { $script:TlppRunner.BaseUrl = "http://localhost:$isoRest/rest" }
+        if ($isoRest -gt 0) { $script:TlppRunner.BaseUrl = "http://127.0.0.1:$isoRest/rest" }
 
         if ($script:TlppRunner.ProtheusRoot) {
             $script:TlppRunner.IsolationBinDir = Join-Path $script:TlppRunner.ProtheusRoot ('Protheus\bin\appserver_' + $isoSlug)
@@ -174,6 +175,12 @@ if ($projIsolation) {
         if ($projBaseUrl) { $script:TlppRunner.BaseUrl = $projBaseUrl }
     }
 }
+
+# BaseUrl com host `localhost` vira 127.0.0.1. O .NET resolve localhost para ::1
+# primeiro e o AppServer escuta so em IPv4: cada request paga ~2s de fallback
+# (medido: /runner/exec em ~2s com localhost, ~10ms com 127.0.0.1). Normaliza
+# aqui para valer tambem para config global e .tlpp-tdd.json ja gravados.
+$script:TlppRunner.BaseUrl = $script:TlppRunner.BaseUrl -replace '^(https?://)localhost(?=[:/]|$)', '${1}127.0.0.1'
 
 if (-not $script:TlppRunner.Includes -and $script:TlppRunner.ProtheusRoot) {
     $script:TlppRunner.Includes = Join-Path $script:TlppRunner.ProtheusRoot 'Protheus\include'

@@ -17,7 +17,7 @@
             User='admin'; Password='senha';
             ProtheusRoot='C:\TOTVS\Protheus_241011';
             AdvplsPath='...\advpls.exe';
-            BaseUrl='http://localhost:8401/rest';
+            BaseUrl='http://127.0.0.1:8401/rest';
             SqlInstance='localhost\PROTHEUSTESTE';
             DbAccessPort=7892
         }

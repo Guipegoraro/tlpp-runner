@@ -73,10 +73,10 @@ $headers = @{
     'Content-Type'  = 'application/json'
 }
 
-# Retry - o HTTPREST cai a CADA compilacao (nao so com @Get/@Post) e a janela
-# medida foi de 68-93s (issue #29). O plano antigo (6 x 3s = 18s) era menor que
-# a janela real, entao desistia antes de o servidor voltar e reportava
-# "connection refused" como se fosse falha definitiva.
+# Retry - o HTTPREST cai a CADA compilacao (nao so com @Get/@Post) e volta no
+# proximo ciclo do [ONSTART] RefreshRate: ~5s com o RefreshRate=2 que o setup
+# grava, ate ~2 min num appserver.ini com RefreshRate=120. O budget longo cobre
+# o pior caso; "connection refused" nessa janela nao e falha definitiva.
 #
 # Backoff ASSIMETRICO: esperar 2 minutos por um AppServer DESLIGADO e so
 # castigo. Entao a espera longa depende do AppServer estar VIVO.
@@ -108,7 +108,7 @@ function Invoke-WithRetry {
     param(
         $Block,
         [int]$DelaySec = 3,
-        [int]$LongWaitSec = 180,   # janela medida varia 37-93s; folga pra maquina mais lenta
+        [int]$LongWaitSec = 180,   # RefreshRate=120 deixa o REST fora ate ~2 min; folga pra maquina lenta
         [int]$ShortWaitSec = 12,   # AppServer morto: reporta rapido
         [string]$ProbeHost,
         [int]$ProbePort
@@ -147,21 +147,47 @@ function Invoke-WithRetry {
     }
 }
 
+function Write-AssertFails {
+    <# Uma linha por assert falho do `asserts.fails` da resposta do /runner/exec. #>
+    param($Asserts)
+    if ($Asserts -and $Asserts.fails) {
+        foreach ($f in @($Asserts.fails)) { Write-Host "  FAIL: $f" -ForegroundColor Red }
+    }
+}
+
 function Show-Error {
-    param($Exception)
-    if ($Exception.Response) {
-        try {
-            $reader = New-Object System.IO.StreamReader($Exception.Response.GetResponseStream())
-            $body = $reader.ReadToEnd()
-            $code = [int]$Exception.Response.StatusCode
-            Write-Host "[runner] HTTP $code" -ForegroundColor Red
-            Write-Host $body
-            return $code
-        } catch { return 0 }
-    } else {
-        Write-Host "[runner] $($Exception.Message)" -ForegroundColor Red
+    <# Erro de request em texto legivel. O corpo da resposta vem de ErrorDetails
+       no PowerShell 7 (HttpResponseMessage nao tem GetResponseStream) e do
+       stream da resposta no 5.1. Erro de execucao da funcao (`error=runtime`)
+       sai como mensagem + pilha + asserts registrados ate o erro. #>
+    param($ErrorRecord)
+    $ex = $ErrorRecord.Exception
+    if (-not $ex.Response) {
+        Write-Host "[runner] $($ex.Message)" -ForegroundColor Red
         return 0
     }
+    $code = 0
+    try { $code = [int]$ex.Response.StatusCode } catch {}
+    $body = $null
+    if ($ErrorRecord.ErrorDetails -and $ErrorRecord.ErrorDetails.Message) {
+        $body = $ErrorRecord.ErrorDetails.Message
+    } elseif ($ex.Response.PSObject.Methods['GetResponseStream']) {
+        try { $body = (New-Object System.IO.StreamReader($ex.Response.GetResponseStream())).ReadToEnd() } catch {}
+    }
+    Write-Host "[runner] HTTP $code" -ForegroundColor Red
+    $j = $null
+    if ($body) { try { $j = $body | ConvertFrom-Json } catch {} }
+    if ($j -and $j.error -eq 'runtime') {
+        Write-Host "$($j.function): ERRO $($j.message)" -ForegroundColor Red
+        if ($j.stack) {
+            $j.stack -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 15 |
+                ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        }
+        Write-AssertFails $j.asserts
+    } elseif ($body) {
+        Write-Host $body
+    }
+    return $code
 }
 
 if ($Ping) {
@@ -173,7 +199,7 @@ if ($Ping) {
         $resp | ConvertTo-Json -Depth 5
         exit 0
     } catch {
-        Show-Error $_.Exception | Out-Null
+        Show-Error $_ | Out-Null
         exit 1
     }
 }
@@ -187,7 +213,7 @@ if ($CheckExists) {
         $resp | ConvertTo-Json -Depth 5
         exit $(if ($resp.exists) { 0 } else { 1 })
     } catch {
-        Show-Error $_.Exception | Out-Null
+        Show-Error $_ | Out-Null
         exit 1
     }
 }
@@ -231,7 +257,9 @@ try {
     if ($Quiet) {
         $dur = [math]::Round([double]$resp.duration, 3)
         $color = if ($resp.result -eq '.T.') { 'Green' } else { 'Red' }
-        Write-Host "$($resp.function): result=$($resp.result) dur=${dur}s" -ForegroundColor $color
+        $sum = if ($resp.asserts) { " asserts=$($resp.asserts.passed)ok/$($resp.asserts.failed)fail" } else { '' }
+        Write-Host "$($resp.function): result=$($resp.result) dur=${dur}s$sum" -ForegroundColor $color
+        Write-AssertFails $resp.asserts
     } else {
         Write-Host "[runner] OK function=$($resp.function) duration=$($resp.duration)s result=$($resp.result)" -ForegroundColor Green
         $resp | ConvertTo-Json -Depth 5
@@ -262,6 +290,6 @@ try {
     }
     exit 0
 } catch {
-    Show-Error $_.Exception | Out-Null
+    Show-Error $_ | Out-Null
     exit 1
 }

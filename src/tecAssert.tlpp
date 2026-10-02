@@ -23,8 +23,9 @@
 //   return u_tecAssertsOk()
 //
 // Resultado via /runner/exec:
-//   { "result": ".T." }  => todos asserts passaram
-//   { "result": ".F." }  => ao menos um falhou; ler Conout pra ver [ASSERT_FAIL]
+//   { "result": ".T.", "asserts": {...} }  => todos asserts passaram
+//   { "result": ".F.", "asserts": {"fails": [...]} }  => ao menos um falhou;
+//   `asserts` e o u_tecAssertSummary() da chamada (as falhas tambem vao pro Conout)
 //------------------------------------------------------------------------------
 
 static nAssertsOk   := 0

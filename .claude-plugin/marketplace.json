@@ -10,7 +10,7 @@
       "name": "tlpp-tdd",
       "source": "./",
       "description": "TDD autonomo para customizacoes ADVPL/TLPP no Protheus - skills + slash commands + framework de teste com mocks",
-      "version": "0.4.0"
+      "version": "0.4.1"
     }
   ]
 }

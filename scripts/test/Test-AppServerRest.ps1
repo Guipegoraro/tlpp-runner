@@ -34,6 +34,13 @@
       B11 [ONSTART] preexistente do usuario nao e duplicado
       B12 Environment divergente -> corrigido in-place
 
+    [ONSTART] RefreshRate - o REST volta depois de cada compilacao no proximo
+    ciclo de verificacao dos jobs; com 120 a janela passa de 1 minuto:
+
+      B13 RefreshRate=120 existente -> 2 in-place, Jobs preservado, sem duplicar
+      B14 RefreshRate menor que o alvo -> intocado (escolha do usuario)
+      B15 bloco criado do zero ja vem com RefreshRate=2
+
     Exit 0 se nenhum check reprovar, 1 caso contrario.
 #>
 $ErrorActionPreference = 'Continue'
@@ -68,7 +75,7 @@ function New-FakeIni {
     if ($ComHttpRest) {
         $s += "`r`n[HTTPJOB]`r`nMain=HTTP_START`r`nEnvironment=DESENVOLVIMENTO`r`n"
         if (-not $ComOnStartDoUsuario) {
-            $s += "`r`n[ONSTART]`r`nJobs=HTTPJOB`r`nRefreshRate=120`r`n"
+            $s += "`r`n[ONSTART]`r`nJobs=HTTPJOB`r`nRefreshRate=2`r`n"
         }
         $s += "`r`n[HTTPV11]`r`nEnable=1`r`nSockets=HTTPREST`r`n"
         $s += "`r`n[HTTPREST]`r`nPort=8401`r`nURIs=HTTPURI`r`nSECURITY=1`r`nEnvironment=DESENVOLVIMENTO`r`nEnable=1`r`n"
@@ -187,6 +194,32 @@ try {
     & $script -AppServerIniPath $ini12 -RestPort 8401 -Environment 'DESENVOLVIMENTO' *>&1 | Out-Null
     $t12 = $latin1.GetString([System.IO.File]::ReadAllBytes($ini12))
     Assert-True 'B12 Environment corrigido' ($t12 -match '(?m)^Environment=DESENVOLVIMENTO\s*$' -and $t12 -notmatch '(?m)^Environment=OUTROENV\s*$')
+
+    # --- B13: RefreshRate alto baixado in-place ---
+    $ini13 = New-Caso 'refreshalto'
+    New-FakeIni -Path $ini13 -ComHttpRest
+    $t13a = $latin1.GetString([System.IO.File]::ReadAllBytes($ini13)) -replace '(?m)^RefreshRate=2\s*$', 'RefreshRate=120'
+    [System.IO.File]::WriteAllText($ini13, $t13a, $latin1)
+    & $script -AppServerIniPath $ini13 -RestPort 8401 -Environment 'DESENVOLVIMENTO' *>&1 | Out-Null
+    $t13 = $latin1.GetString([System.IO.File]::ReadAllBytes($ini13))
+    Assert-True 'B13 RefreshRate=2 aplicado'      ($t13 -match '(?m)^RefreshRate=2\s*$')
+    Assert-True 'B13 RefreshRate=120 removido'    ($t13 -notmatch '(?m)^RefreshRate=120\s*$')
+    Assert-True 'B13 uma unica chave RefreshRate' ((([regex]::Matches($t13, '(?m)^RefreshRate=')).Count) -eq 1)
+    Assert-True 'B13 Jobs=HTTPJOB preservado'     ($t13 -match '(?m)^Jobs=HTTPJOB\s*$')
+    # B11 roda sobre [ONSTART] do usuario com RefreshRate=60: tambem e baixado
+    Assert-True 'B13 RefreshRate=60 do usuario baixado' ($t11 -match '(?m)^RefreshRate=2\s*$' -and $t11 -notmatch '(?m)^RefreshRate=60\s*$')
+
+    # --- B14: RefreshRate menor que o alvo fica ---
+    $ini14 = New-Caso 'refreshbaixo'
+    New-FakeIni -Path $ini14 -ComHttpRest
+    $t14a = $latin1.GetString([System.IO.File]::ReadAllBytes($ini14)) -replace '(?m)^RefreshRate=2\s*$', 'RefreshRate=1'
+    [System.IO.File]::WriteAllText($ini14, $t14a, $latin1)
+    $md5_14 = (Get-FileHash $ini14 -Algorithm MD5).Hash
+    & $script -AppServerIniPath $ini14 -RestPort 8401 -Environment 'DESENVOLVIMENTO' *>&1 | Out-Null
+    Assert-True 'B14 RefreshRate=1 intocado (arquivo nao muda)' ($md5_14 -eq (Get-FileHash $ini14 -Algorithm MD5).Hash)
+
+    # --- B15: bloco criado do zero (B7) ja vem com RefreshRate=2 ---
+    Assert-True 'B15 [ONSTART] novo com RefreshRate=2' ($t7 -match '(?m)^RefreshRate=2\s*$')
 
 } catch {
     # Sem isso um erro terminante do script sob teste pularia todos os asserts e

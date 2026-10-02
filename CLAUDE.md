@@ -159,8 +159,9 @@ Para tabela permanente reutilizavel: `/tlpp-table create <nome> "<cols>"`.
 
 ## Compilacao explicita
 
-Nao ha hook de recompilacao automatica ao salvar (removido - toda compilacao
-reinicia o HTTPREST por 37-93s, entao o agente decide QUANDO compilar).
+Nao ha hook de recompilacao automatica ao salvar: toda compilacao derruba o
+HTTPREST ate o proximo ciclo do `[ONSTART] RefreshRate` (~13s de janela total com
+o `RefreshRate=2` que o setup grava), entao o agente decide QUANDO compilar.
 Compile via `/tlpp-build <arquivo>` ou `/tlpp-test` (que compila antes de rodar).
 
 ## Regras criticas (de instructions globais do user)
@@ -185,13 +186,15 @@ Em testes de integracao, tabelas `Z_TST_*` sao criadas via DDL (`runner/sql/02-c
 | `/runner/func` | GET   | Verifica se funcao existe no RPO        |
 | `/runner/exec` | POST  | Executa funcao - body: `{function,argString}` |
 
-URL base: `http://localhost:8401/rest/runner/*`
+URL base: `http://127.0.0.1:8401/rest/runner/*` (host `localhost` no `BaseUrl` e normalizado para `127.0.0.1` ao carregar a config: o .NET tenta IPv6 primeiro e cada request pagaria ~2s de fallback)
+Resposta do `/runner/exec`: `{function, argString, result, duration, env, asserts?}`. `asserts` = `u_tecAssertSummary()` (`ok`, `passed`, `failed`, `fails[]`), presente quando a chamada registrou ao menos um assert - as falhas chegam na resposta, sem ler `console.log`. Erro de execucao na funcao chamada: HTTP 500 `{error:"runtime", function, argString, message, stack, duration, asserts?}`, com a pilha apontando fonte e linha. 400/404 tambem vem com corpo JSON (ex. `{"error":"funcao_nao_existe","function":"u_x"}`).
 Auth: Basic admin / senha em `~/.claude/tlpp-tdd/config.ps1` (global, per-machine). No tlpp-runner repo dev, `runner/runner.config.local.ps1` ainda carrega como legacy cascade.
 
 ## Limitacoes conhecidas
 
 - **`function` regular nao compila** sem token JWT do portal TOTVS
-- **QUALQUER compilacao reinicia o HTTPREST por 37-93s** (medido, issue #29). Nao e especifico de `@Get/@Post` - fontes sem nenhuma annotation derrubam igual, o gatilho e a escrita no RPO. `recompile=F` nao evita (o advpls compila do mesmo jeito). Mitigacoes: `Invoke-TlppBuild.ps1` pula fontes ja no RPO com o mesmo conteudo - guard 0 e o **oraculo RPO** (#33: `u_tecApoStat`/`GetAPOInfo` via `/runner/exec` compara dataFonte com mtime do disco, por objeto), fallback e o cache local (`runner/BuildCache.ps1`); `-Force` ignora ambos. `Invoke-TlppRunner.ps1` faz backoff assimetrico - espera longa se a porta responde (reiniciando), curta se recusa (AppServer desligado). Compile que FALHA tambem paga a janela de restart (~30s) - rollback nao evita. A janela e POR INSTANCIA: projeto com `isolation` no `.tlpp-tdd.json` (#34) so derruba o REST dele mesmo
+- **QUALQUER compilacao derruba o HTTPREST** (issue #29). O AppServer executa "Stopping all HTTP servers"; com `BuildKillUsers=1` o job `HTTP_START` do `[ONSTART]` morre e o REST so volta no proximo ciclo do `[ONSTART] RefreshRate` (intervalo em que o AppServer confere e relanca os jobs). O setup grava `RefreshRate=2`: build ~7-8s + REST de volta ~5s depois (janela ~13s). Ini com `RefreshRate=120` deixa o REST fora ate ~2 min - `/tlpp-tdd-setup` (doctor) ou `Set-AppServerRest.ps1` baixa o valor in-place (exige reiniciar o AppServer). Nao e especifico de `@Get/@Post` - o gatilho e a escrita no RPO. `recompile=F` nao evita (o advpls compila do mesmo jeito), e compile que FALHA tambem derruba os HTTP servers. Mitigacoes: `Invoke-TlppBuild.ps1` pula fontes ja no RPO com o mesmo conteudo - guard 0 e o **oraculo RPO** (#33: `u_tecApoStat`/`GetAPOInfo` via `/runner/exec` compara dataFonte com mtime do disco, por objeto), fallback e o cache local (`runner/BuildCache.ps1`); `-Force` ignora ambos. `Invoke-TlppRunner.ps1` faz backoff assimetrico - espera ate 180s se a porta TCP responde (reiniciando; cobre ini com RefreshRate alto), curta se recusa (AppServer desligado). A janela e POR INSTANCIA: projeto com `isolation` no `.tlpp-tdd.json` (#34) so derruba o REST dele mesmo
+- **Dois AppServers sobre o mesmo `custom.rpo`** (ex. o de desenvolvimento e o `appserver_rest` abertos juntos): a compilacao falha pelos dois com `COMPILEERROR-300 Failed to open repository ... used by another process`; quando a falha vem pelo AppServer do REST, os HTTP servers dele so voltam reiniciando o AppServer. `Invoke-TlppBuild.ps1` detecta e imprime o diagnostico
 - **Mocks so cobrem codigo que passa pelos wrappers** em `tecWrap.tlpp`
 - **TCLink no PROTHEUS_TST exige permissao** do login DBAccess no banco de teste
 - **`FWRest` apontando pro proprio AppServer** causa deadlock/crash. `u_tecHttpReq` resolve com `HTTPQuote`.

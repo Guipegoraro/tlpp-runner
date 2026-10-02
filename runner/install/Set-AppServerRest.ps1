@@ -98,6 +98,22 @@ if ($needsHttpRest) {
     }
 }
 
+# 1b) [ONSTART] RefreshRate - o REST so volta depois de uma compilacao no proximo
+# ciclo de verificacao dos jobs (ver $script:RestRefreshRate em IniIO.ps1). Baixa
+# o valor quando esta acima do alvo ou ausente; valor menor do usuario fica.
+$refreshAtual = $null
+$onBounds = Get-IniSectionBounds -Lines $content -Section 'ONSTART'
+if ($onBounds) {
+    foreach ($l in $content[$onBounds.Start..$onBounds.End]) {
+        if ($l -match '^\s*RefreshRate\s*=\s*(\d+)') { $refreshAtual = [int]$matches[1] }
+    }
+}
+$ajustaRefresh = $onBounds -and ($null -eq $refreshAtual -or $refreshAtual -gt $script:RestRefreshRate)
+if ($ajustaRefresh) {
+    $de = if ($null -eq $refreshAtual) { 'ausente' } else { "$refreshAtual" }
+    $plannedChanges += "[ONSTART] RefreshRate $de -> $script:RestRefreshRate (o REST volta ~5s apos cada compilacao em vez de esperar o ciclo inteiro)"
+}
+
 # 2) Secao [GENERAL] - ConsoleLog (so adiciona se nao existe)
 $general = @()
 $genBounds = Get-IniSectionBounds -Lines $content -Section 'GENERAL'
@@ -155,6 +171,13 @@ if ($needsHttpRest) {
         foreach ($l in $restBlock[$sec]) { $newContent.Add($l) }
         $newContent.Add('')
     }
+}
+
+if ($ajustaRefresh) {
+    $ajustadoOn = Set-IniSectionKeys -Lines $newContent.ToArray() -Section 'ONSTART' `
+                                     -Keys ([ordered]@{ 'RefreshRate' = "$script:RestRefreshRate" })
+    $newContent.Clear()
+    $newContent.AddRange([string[]]$ajustadoOn)
 }
 
 if (-not $hasConsoleLog) {

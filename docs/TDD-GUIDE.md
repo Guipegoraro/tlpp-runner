@@ -14,15 +14,21 @@ depois você quiser a assinatura exata de cada helper, o catálogo canônico é 
 
 ## 1. Por que TDD aqui, apesar do ciclo de compilação
 
-A objeção honesta primeiro: **toda compilação reinicia o HTTPREST do AppServer por
-37 a 93 segundos** (medido, issue #29). Não é por causa de `@Get`/`@Post` — fonte
-sem nenhuma annotation derruba igual, porque o gatilho é a **escrita no RPO**, que é
-aberto com lock exclusivo. Um compile que **falha** também paga a janela (~30s
-medido): o custo é da tentativa de lock, não do commit. Passar `recompile=F` não
-evita.
+A objeção honesta primeiro: **toda compilação derruba o HTTPREST do AppServer**
+(issue #29). O AppServer executa "Stopping all HTTP servers"; com `BuildKillUsers=1`
+o job `HTTP_START` do `[ONSTART]` morre, e o REST só volta no próximo ciclo do
+`[ONSTART] RefreshRate` — o intervalo em que o AppServer confere e relança os jobs.
+Com o `RefreshRate=2` que o setup grava, o build leva ~7-8 s e o REST responde ~5 s
+depois (janela total ~13 s). Num `appserver.ini` com `RefreshRate=120` a janela
+chega a ~2 min; `/tlpp-tdd-setup` (doctor) baixa o valor. Não é por causa de
+`@Get`/`@Post` — fonte sem nenhuma annotation derruba igual, porque o gatilho é a
+**escrita no RPO**, que é aberto com lock exclusivo. Um compile que **falha** também
+derruba os HTTP servers: o custo é da tentativa de lock, não do commit. Passar
+`recompile=F` não evita.
 
-Num loop TDD ingênuo — editar, compilar, esperar 1 minuto, rodar — o ciclo morre.
-O que torna o loop viável são três coisas, todas já implementadas:
+Num loop TDD ingênuo — editar, compilar, esperar o REST voltar, rodar — essa espera
+se repete a cada iteração. O que mantém o loop curto são três coisas, todas já
+implementadas:
 
 | Mitigação | O que faz | Efeito prático |
 |---|---|---|
@@ -31,11 +37,12 @@ O que torna o loop viável são três coisas, todas já implementadas:
 | **Isolamento opt-in** (#34) | `isolation` no `.tlpp-tdd.json` dá ao projeto uma instância AppServer + RPO próprios | A janela de restart passa a ser **por instância**: compilar aqui não derruba o REST dos outros projetos |
 
 E o feedback em si é barato: a **rota por função** (`/tlpp-test <funcao>`, que bate
-em `POST /runner/exec`) devolve **uma linha** com `result=.T./.F.` em milissegundos.
-Você não paga PROBAT, não paga discovery, não abre TDS-VSCode, não aperta Ctrl+F9.
+em `POST /runner/exec`) devolve **uma linha** com `result=.T./.F.` e o placar dos
+asserts em milissegundos, mais uma linha por assert que falhou. Você não paga
+PROBAT, não paga discovery, não abre TDS-VSCode, não aperta Ctrl+F9.
 
-Ou seja: o custo real do loop não é "1 minuto por iteração", é "1 minuto **na
-primeira** iteração de cada mudança de fonte, e ~0 nas rodadas de teste". Rodar o
+Ou seja: a janela de restart não é paga a cada rodada, só **na primeira** iteração
+de cada mudança de fonte; as rodadas de teste custam ~0. Rodar o
 mesmo teste 20 vezes enquanto você pensa custa nada.
 
 ### E o que se ganha
@@ -148,7 +155,7 @@ um objeto dublê que você passa para a sua função, e funciona sem `Start`.
 
 Chame a função sob teste e afirme sobre **o que ela retorna ou causa**, nunca
 sobre como ela calcula. Vários asserts por caso são bem-vindos; descreva cada um
-em português, porque a descrição é o que aparece no `console.log` quando falha.
+em português, porque a descrição é o que aparece na linha `FAIL:` quando falha.
 
 Assert sobre o **mock** ("o `u_tecMkSql` foi configurado com este SQL?") testa a
 infraestrutura de teste, não a sua função. Não faça.
@@ -305,17 +312,17 @@ Escreva `test/unit/tecMinhaTst.tlpp` com o bloco da seção 3 e rode:
 ```
 
 O teste compila e roda, mas dentro dele a chamada `u_tecMinha(...)` não existe no
-RPO. Isso **mata a thread** (não é erro tratado), e o que volta é o 500 genérico da
-camada REST:
-
-```json
-{"code":500,"message":"Internal Server Error"}
-```
-
-E no `console.log` do AppServer está a causa real:
+RPO. Isso é um **erro de execução** dentro da função chamada: o endpoint o captura e
+devolve HTTP 500 com `{"error":"runtime", function, argString, message, stack,
+duration}` (mais `asserts`, se algum assert rodou antes). O runner imprime a
+mensagem e as primeiras linhas da pilha, que apontam o fonte e a linha do teste
+onde a chamada falhou:
 
 ```
-InterFunctionCall: cannot find function U_MINHAFUNC in AppMap on TLPP.CALL(TLPP_FUNCTIONS.TLPP)
+[runner] HTTP 500
+u_test_tecMinha_caminho_feliz: ERRO InterFunctionCall: cannot find function U_TECMINHA in AppMap
+  ...
+  InterFunctionCall: cannot find function U_TECMINHA in AppMap on U_TEST_TECMINHA_CAMINHO_FELIZ(TECMINHATST.TLPP) ... line : 12
 ```
 
 **Isso é um vermelho saudável** — é a prova de que o teste está de fato exercitando
@@ -331,35 +338,43 @@ O outro vermelho legítimo: a função já está no RPO e devolve a coisa errada
 resposta é bem-comportada e o `result` reflete os asserts:
 
 ```json
-{"function":"u_test_x","argString":"","result":".F.","duration":0.002,"env":"DESENVOLVIMENTO"}
+{"function":"u_test_x","argString":"","result":".F.","duration":0.002,"env":"DESENVOLVIMENTO",
+ "asserts":{"ok":false,"passed":1,"failed":1,"fails":["programs vazio | expected=<empty> actual=<J>"]}}
 ```
 
-E o motivo está no `console.log`, com a descrição em português que você escreveu:
+O motivo vem na própria resposta, no campo `asserts.fails`, com a descrição em
+português que você escreveu. O runner (`/tlpp-test`) imprime assim:
 
 ```
-[ASSERT_FAIL] programs vazio | expected=<empty> actual=<J>
+u_test_x: result=.F. dur=0.002s asserts=1ok/1fail
+  FAIL: programs vazio | expected=<empty> actual=<J>
 ```
 
-Para ler o log:
+O `console.log` do AppServer também recebe `[ASSERT_OK]`/`[ASSERT_FAIL]` via
+`ConOut` — útil como complemento, por exemplo para ver a ordem em que os asserts
+rodaram, mas não é preciso abri-lo para saber o que falhou.
 
-```powershell
-. "$env:CLAUDE_PLUGIN_ROOT\runner\runner.config.ps1"
-Get-Content $TlppRunner.ConsoleLogPath -Tail 30 | Select-String 'ASSERT_FAIL'
-```
+E se a função chamada estourar no meio (type mismatch, variável inexistente...), a
+resposta é o 500 `error=runtime` da seção 6.1: mensagem, pilha com fonte e linha, e
+os `FAIL` registrados até o erro. A única exceção é `Break("...")` explícito no
+código chamado (ou erro que derruba a thread, como `Empty()` sobre JsonObject), que escapa do tratamento e volta como o 500 genérico do tlppCore
+(`{"code":500,"message":"Internal Server Error"}`) — só nesse caso o detalhe está no
+`console.log`/`error.log`.
 
 ### 6.3 Green — implementa e compila
 
 Escreva `src/tecMinha.tlpp` com `user function tecMinha(...)`, sempre acessando
-dependências **pelos wrappers**. Salvar dispara o hook `PostToolUse`, que compila:
+dependências **pelos wrappers**. Compile com `/tlpp-build <arquivo>` (ou deixe o
+`/tlpp-test` compilar antes de rodar):
 
 ```
 [INFO] [SUCCESS] Source C:/.../tecMinha.tlpp compiled successfully.
 [build] OK
 ```
 
-Aqui você paga a janela de restart do HTTPREST. Enquanto o wrapper imprime
-`REST reiniciando`, está tudo normal: a porta REST fica **fechada a janela inteira**
-e ele já aguarda com backoff. Só `AppServer nao responde em <host>:<porta>` indica
+Aqui você paga a janela de restart do HTTPREST (~13 s com `RefreshRate=2`).
+Enquanto o wrapper imprime `REST reiniciando`, está tudo normal: a porta REST fica
+**fechada a janela inteira** e ele já aguarda com backoff. Só `AppServer nao responde em <host>:<porta>` indica
 processo realmente parado.
 
 ### 6.4 Skip pelo oráculo — isto é **sucesso**
@@ -372,8 +387,8 @@ Rodando de novo sem mudar o fonte:
 ```
 
 Não trate como falha e **não force recompilação**. Isso significa que o RPO já tem
-exatamente esse conteúdo — compilar à toa derrubaria o REST por 37-93s sem ganho
-nenhum. O cache invalida sozinho quando o conteúdo muda.
+exatamente esse conteúdo — compilar à toa derrubaria o REST sem ganho nenhum. O
+cache invalida sozinho quando o conteúdo muda.
 
 ### 6.5 Green
 
@@ -382,7 +397,8 @@ nenhum. O cache invalida sozinho quando o conteúdo muda.
 ```
 
 ```json
-{"function":"u_test_x","argString":"","result":".T.","duration":0.002,"env":"DESENVOLVIMENTO"}
+{"function":"u_test_x","argString":"","result":".T.","duration":0.002,"env":"DESENVOLVIMENTO",
+ "asserts":{"ok":true,"passed":2,"failed":0,"fails":[]}}
 ```
 
 ### 6.6 Refactor

@@ -54,12 +54,14 @@ Se algo falhar: ver `docs/SETUP.md` Troubleshooting.
 
 3. **Implementar** o fonte mínimo em `src/<nome>.tlpp` (sempre `user function`, nunca `function` puro). Compilar é explícito: `/tlpp-build <arquivo>` — ou deixe o `/tlpp-test` do passo seguinte compilar antes de rodar.
 
-4. **Re-rodar**: `/tlpp-test u_test_minha_feature_caso1` → `.T.`. Se ainda `.F.`, ler ConOut do console pra ver `[ASSERT_FAIL]` (path vem de `runner.config.ps1`):
+4. **Re-rodar**: `/tlpp-test u_test_minha_feature_caso1` → `.T.`. Se ainda `.F.`, a própria saída do runner traz o placar e uma linha por assert que falhou (vem do campo `asserts` da resposta do `/runner/exec`):
 
-   ```powershell
-   . .\runner\runner.config.ps1
-   Get-Content $TlppRunner.ConsoleLogPath -Tail 30 | Select-String 'ASSERT_FAIL'
    ```
+   u_test_minha_feature_caso1: result=.F. dur=0.002s asserts=1ok/2fail
+     FAIL: soma errada | expected=3 actual=2
+   ```
+
+   Erro de execução na função (type mismatch, variável inexistente...) sai como `u_x: ERRO <mensagem>` seguido da pilha com fonte e linha, mais os `FAIL` registrados até o erro.
 
 5. **Refator** com confiança — rerodar o teste após cada mudança. Iterar.
 
@@ -96,8 +98,8 @@ Código pronto por cenário: [RECIPES.md](RECIPES.md). Racional e escolha de cas
 - ❌ Usar `Empty()` em JsonObject diretamente — não suportado. Use `u_tecAssertEmpty` (tipo-aware) ou `:hasProperty()`.
 - ❌ `FWRest` dentro de endpoint REST chamando outro endpoint do **mesmo** AppServer — pode causar deadlock. Use `u_tecHttpReq` (delega a `HTTPQuote`).
 - ❌ Criar SX3/SX6/SIX via fonte — use o Configurador.
-- ❌ Tratar `[build] ... pulando` ou `nada a compilar - HTTPREST intacto` como falha — é **sucesso**. O fonte já está no RPO com esse conteúdo, e compilar à toa derrubaria o REST por 37-93s. Não force recompilação por conta própria; o cache invalida sozinho quando o conteúdo muda.
-- ❌ Insistir em nova tentativa ao ver `connection refused` logo após compilar — o HTTPREST reinicia a **cada** compilação (não só de fonte com `@Get/@Post`) e a janela medida foi de 37-93s. O wrapper já aguarda: enquanto ele imprime `REST reiniciando`, está tudo normal — a porta 8401 fica fechada a janela inteira, é assim mesmo. Só quando ele diz `AppServer nao responde em <host>:<porta>` é que o processo está realmente parado, e aí retentar não resolve (suba o AppServer).
+- ❌ Tratar `[build] ... pulando` ou `nada a compilar - HTTPREST intacto` como falha — é **sucesso**. O fonte já está no RPO com esse conteúdo, e compilar à toa derrubaria o REST sem ganho nenhum. Não force recompilação por conta própria; o cache invalida sozinho quando o conteúdo muda.
+- ❌ Insistir em nova tentativa ao ver `connection refused` logo após compilar — o HTTPREST cai a **cada** compilação (não só de fonte com `@Get/@Post`) e só volta no próximo ciclo do `[ONSTART] RefreshRate` (~5s depois do build com o `RefreshRate=2` que o setup grava; até ~2 min num ini com 120). O wrapper já aguarda: enquanto ele imprime `REST reiniciando`, está tudo normal — a porta 8401 fica fechada a janela inteira, é assim mesmo. Só quando ele diz `AppServer nao responde em <host>:<porta>` é que o processo está realmente parado, e aí retentar não resolve (suba o AppServer).
 
 ## Exemplo mínimo end-to-end
 

@@ -34,8 +34,9 @@ TDS-VSCode aberto nem de token JWT.
 
 ## Cache de build (importante ao ler a saida)
 
-Compilar derruba o HTTPREST por 37-93s, entao fontes **ja no RPO com o mesmo
-conteudo sao pulados**. O guard 0 e o **oraculo RPO** (#33): o build pergunta ao
+Compilar derruba o HTTPREST ate o proximo ciclo do `[ONSTART] RefreshRate` (~13s
+de janela com o `RefreshRate=2` que o setup grava; ate ~2 min com 120), entao
+fontes **ja no RPO com o mesmo conteudo sao pulados**. O guard 0 e o **oraculo RPO** (#33): o build pergunta ao
 proprio AppServer o que esta compilado (dataFonte vs mtime do disco, por objeto);
 com REST fora do ar cai no cache local:
 
@@ -63,5 +64,6 @@ ponto de entrada homonimo) e a compilacao vai sobrescrever a versao do outro.
 - **"Regular functions are not allowed"** -> trocar `function` por `user function` ou `static function`
 - **"Cannot find method"** -> nome de metodo diferente (ex: usar `setKeyHeaderResponse` ao inves de `setContentType`)
 - **"Connection refused"** -> AppServer nao esta no ar. Se o projeto tem `isolation` no `.tlpp-tdd.json`, a instancia dedicada sobe on-demand; senao verifique o AppServer compartilhado
+- **`COMPILEERROR-300 Failed to open repository ... used by another process`** + aviso `[build] o RPO esta aberto por OUTRO AppServer` -> dois AppServers sobre o mesmo `custom.rpo`. Fechar o outro e reiniciar o do REST: os HTTP servers dele so voltam com o restart
 - **"Incompatible types"** -> typing estrito do TLPP - remova `as <tipo>` em variaveis inicializadas com nil
 - **`advpls` nao encontrado** -> maquina sem setup. Rode a skill `tlpp-tdd-setup` (modo doctor)
