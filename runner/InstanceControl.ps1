@@ -123,8 +123,13 @@ function Start-IsolatedInstanceIfNeeded {
     # Espera o REST responder - nao basta a TCP abrir: as rotas /rest/runner/*
     # sobem depois, pelo [ONSTART]/HTTPJOB. Quem espera aqui poupa o chamador de
     # um "connection refused" que nao significa erro nenhum.
+    # Porta pelo parser de URI: um regex ':(\d+)' pegaria o ':1' de um host IPv6
+    # literal ([::1]). Porta implicita (sem ':<n>' no BaseUrl) fica 0.
     $restPort = 0
-    if ($Config.BaseUrl -match ':(\d+)') { $restPort = [int]$matches[1] }
+    try {
+        $uri = [uri]$Config.BaseUrl
+        if (-not $uri.IsDefaultPort) { $restPort = $uri.Port }
+    } catch { $restPort = 0 }
     if ($restPort -le 0) {
         Write-Host "[inst] iniciada (sem porta REST no BaseUrl - nao vou esperar o REST)" -ForegroundColor DarkYellow
         return (& $out $true 'iniciada sem espera do REST')

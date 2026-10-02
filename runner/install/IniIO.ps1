@@ -151,10 +151,9 @@ function Set-IniSectionKeys {
 
 function New-RestSectionLines {
     <# Bloco COMPLETO de secoes que fazem o AppServer servir /rest/*.
-       Fonte unica: o template validado no spike do isolamento (#34) e o que o
-       Set-AppServerRest.ps1 grava quando a secao nao existe - antes o segundo
-       criava so [HTTPREST] com Port/Environment e o servidor nao respondia
-       /rest por falta de [HTTPURI]/[HTTPV11]/[ONSTART].
+       Fonte unica do template: usado pelo New-IsolatedInstance.ps1 (#34) e pelo
+       Set-AppServerRest.ps1 quando a secao nao existe. So [HTTPREST] nao basta:
+       sem [HTTPURI]/[HTTPV11]/[ONSTART] o servidor nao responde /rest.
 
        Devolve um hashtable ordenado secao -> linhas de chave (sem o cabecalho),
        pra quem chama decidir quais secoes adicionar (nunca duplicar uma que ja

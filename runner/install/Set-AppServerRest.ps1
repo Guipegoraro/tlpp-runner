@@ -101,19 +101,21 @@ if ($needsHttpRest) {
 # 1b) [ONSTART] RefreshRate - o REST so volta depois de uma compilacao no proximo
 # ciclo de verificacao dos jobs (ver $script:RestRefreshRate em IniIO.ps1). Baixa
 # o valor quando esta acima do alvo ou ausente (default do AppServer: 60s); valor
-# menor do usuario fica. A chave vale para TODOS os jobs da secao e o AppServer
-# relanca a cada ciclo o job que terminou: com outro job em `Jobs=` o ajuste nao
-# e feito, so avisado - decidir a frequencia daquele job e do usuario.
+# menor do usuario fica, exceto abaixo de 1, que o TDN nao documenta. A chave vale
+# para TODOS os jobs da secao e o AppServer relanca a cada ciclo o job que
+# terminou: com outro job em `Jobs=` o ajuste nao e feito, so avisado - decidir a
+# frequencia daquele job e do usuario. Le a PRIMEIRA linha RefreshRate, a mesma
+# que o Set-IniSectionKeys reescreve.
 $refreshAtual = $null
 $onJobs = @()
 $onBounds = Get-IniSectionBounds -Lines $content -Section 'ONSTART'
 if ($onBounds) {
     foreach ($l in $content[$onBounds.Start..$onBounds.End]) {
-        if ($l -match '^\s*RefreshRate\s*=\s*(\d+)') { $refreshAtual = [int]$matches[1] }
+        if ($null -eq $refreshAtual -and $l -match '^\s*RefreshRate\s*=\s*(\d+)') { $refreshAtual = [int]$matches[1] }
         if ($l -match '^\s*Jobs\s*=\s*(.*)$') { $onJobs = @($matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
     }
 }
-$refreshAlto   = $onBounds -and ($null -eq $refreshAtual -or $refreshAtual -gt $script:RestRefreshRate)
+$refreshAlto   = $onBounds -and ($null -eq $refreshAtual -or $refreshAtual -lt 1 -or $refreshAtual -gt $script:RestRefreshRate)
 $outrosJobs    = @($onJobs | Where-Object { $_ -ne 'HTTPJOB' })
 $ajustaRefresh = $refreshAlto -and $outrosJobs.Count -eq 0
 if ($ajustaRefresh) {
@@ -172,8 +174,7 @@ if ($needsHttpRest) {
     }
 } else {
     # Secao existente: update in-place das chaves obrigatorias, preservando o
-    # resto (era exatamente o que faltava - o script anunciava "Ajustar
-    # [HTTPREST]" e nao mexia em nada).
+    # resto do arquivo (comentarios, ordem, chaves do usuario).
     $newContent.Clear()
     $newContent.AddRange([string[]](Set-IniSectionKeys -Lines $content -Section 'HTTPREST' -Keys $restKeys))
     foreach ($sec in @('HTTPJOB','ONSTART','HTTPV11','HTTPURI')) {
@@ -216,9 +217,8 @@ if ($EnableProbat) {
 }
 
 # Guard anti-falso-"atualizado": se o plano nao produziu diferenca real, nao
-# backupeia, nao grava e NAO diz que atualizou. Foi assim que o bug antigo
-# passava batido - anunciava "Ajustar [HTTPREST]" e terminava em verde sem ter
-# mudado um byte.
+# backupeia, nao grava e NAO diz que atualizou - o resultado reportado e sempre
+# o do arquivo, nao o do plano.
 if (($newContent.ToArray() -join "`n") -eq ($content -join "`n")) {
     Write-Host "[appsrv-rest] Nada a mudar - $AppServerIniPath ja esta configurado." -ForegroundColor DarkGray
     return

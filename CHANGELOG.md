@@ -18,8 +18,17 @@ Correcoes medidas contra o AppServer real ao avaliar o `tds_run` do tds-mcp como
 - **`tecRunrToStr` serializa JsonObject** (`toJson()`) em vez de `<J>`.
 - **Diagnostico de `COMPILEERROR-300`** no `Invoke-TlppBuild`: dois AppServers sobre o mesmo `custom.rpo` impedem a compilacao pelos dois, e o AppServer do REST fica sem HTTP ate reiniciar.
 
+- **`Set-AppServerRest` respeita os outros jobs do `[ONSTART]`**: `RefreshRate` vale para todos os jobs da secao, entao o ajuste so e feito quando ela roda apenas o `HTTPJOB`; com outro job, mantem o valor e avisa. `RefreshRate` abaixo de 1 (nao documentado no TDN) vira 2; com a chave duplicada vale a primeira linha, a mesma que e reescrita.
+- **404 `funcao_nao_existe` com JSON valido** para nome com aspas (montado por `JsonObject`, nao por concatenacao).
+- **`duration` na virada da meia-noite**: `Seconds()` zera e a duracao saia negativa.
+- **`InstanceControl` le a porta do `BaseUrl` pelo parser de URI** (host IPv6 literal `[::1]` dava porta 1).
+- Normalizacao do `BaseUrl` so para `http` (em `https` o certificado e do nome `localhost`) e tambem com credencial na URL.
+
 ### Mudado
 - `.gitignore` cobre `runner/runner.config.local.ps1.bak*`.
+- `Show-Error`/`Write-AssertFails` em `runner/RunnerOutput.ps1`, com testes O1-O5 no `Test-RunnerConfig`.
+- ProtheusDOC completo em `tecRunrApi.tlpp`, incluindo a nota de que `/runner/exec` executa codigo remoto por desenho e so existe para AppServer local.
+- Comentarios que narravam versoes anteriores reescritos no presente (`Set-AppServerRest`, `IniIO`, `HttpRetry`, `tecTstWithTst`, testes PS).
 
 ## [0.4.0] - 2026-08-15
 

@@ -56,9 +56,9 @@ user function test_tstWith_garante_teardown_mesmo_apos_excecao()
 return u_tecAssertsOk()
 
 //------------------------------------------------------------------------------
-// Exception no bloco NAO pode virar teste verde. Antes do fix, o RECOVER do
-// tecTstWith so fazia Conout: os asserts que rodaram ANTES do crash contavam
-// como ok e u_tecAssertsOk() devolvia .T..
+// Exception no bloco NAO pode virar teste verde: os asserts que rodaram ANTES
+// do crash contam como ok, e sem a falha que o RECOVER do tecTstWith registra
+// o u_tecAssertsOk() devolveria .T..
 //------------------------------------------------------------------------------
 @TestFixture()
 user function test_tstWith_excecao_nao_vira_teste_verde()

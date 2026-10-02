@@ -7,16 +7,12 @@
     HTTPREST so esta reiniciando, curta quando o processo esta morto) depende de
     distinguir "nao conectou" de "conectou e o servidor respondeu erro".
 
-    A versao antiga classificava por MENSAGEM:
+    A mensagem da excecao e localizada: em PowerShell 5.1 pt-BR ela e "Nao e
+    possivel conectar-se ao servidor remoto", sem nenhum termo como 'refused' ou
+    'connection'. Classificar por mensagem faria toda falha de conexao virar erro
+    definitivo, sem esperar o REST voltar.
 
-        $_.Exception.Message -match 'recusou|refused|connection|ConnectFailure'
-
-    Isso e localizado. Em PowerShell 5.1 pt-BR a mensagem e "Nao e possivel
-    conectar-se ao servidor remoto" - nenhum dos termos casa, entao TODA falha de
-    conexao caia no `throw` imediato e o backoff nunca rodava: o usuario via
-    "erro" a cada compilacao em vez de esperar o REST voltar.
-
-    Aqui a decisao e por TIPO, que nao e traduzido:
+    Por isso a decisao e por TIPO, que nao e traduzido:
 
       - System.Net.WebException com Status ConnectFailure/Timeout  (PS 5.1)
       - System.Net.Http.HttpRequestException                       (PS 7)
@@ -29,7 +25,7 @@
     HERDA de HttpRequestException. Por isso a comparacao e por FullName EXATO -
     um 404 "funcao nao existe" precisa falhar na hora, nao insistir 180s.
 
-    O regex antigo continua como FALLBACK, pro caso de excecao sem tipo util.
+    Um regex sobre a mensagem fica como FALLBACK, pro caso de excecao sem tipo util.
 #>
 
 function Get-ExceptionChain {

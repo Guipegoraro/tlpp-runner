@@ -18,6 +18,10 @@ namespace tec.runner.api
 /*/{Protheus.doc} tecRunrPing
 Health check do tlpp-runner.
 GET /rest/runner/ping
+@type user function
+@author Guilherme Pegoraro
+@since 09/05/2026
+@return logical, sempre .T. (o resultado vai no corpo: status, env, company, branch, timestamp)
 /*/
 //------------------------------------------------------------------------------
 @Get("/runner/ping")
@@ -39,6 +43,10 @@ return .T.
 /*/{Protheus.doc} tecRunrFunc
 Verifica se uma funcao existe no RPO.
 GET /rest/runner/func?name=u_tecCalcDsc
+@type user function
+@author Guilherme Pegoraro
+@since 09/05/2026
+@return logical, sempre .T. (200 {function, exists} ou 400 name_obrigatorio)
 /*/
 //------------------------------------------------------------------------------
 @Get("/runner/func")
@@ -76,6 +84,15 @@ Resposta 200: {function, argString, result, duration, env, asserts?}
 Resposta 500: {error:"runtime", function, argString, message, stack, duration, asserts?}
 `asserts` (= u_tecAssertSummary(): ok, passed, failed, fails[]) so vem quando a
 chamada registrou ao menos um assert.
+
+Executa a expressao montada com o corpo do request (funcao + argString): e
+execucao remota de codigo por desenho. Exige Basic auth (SECURITY=1) e existe
+so para AppServer local de desenvolvimento - nunca habilitar em ambiente de
+cliente.
+@type user function
+@author Guilherme Pegoraro
+@since 09/05/2026
+@return logical, sempre .T. (o status HTTP e o corpo carregam o resultado)
 /*/
 //------------------------------------------------------------------------------
 @Post("/runner/exec")
@@ -147,8 +164,11 @@ user function tecRunrExec()
     endif
 
     if !tlpp.ffunc(cFunc)
+        jResp := JsonObject():new()
+        jResp["error"]    := "funcao_nao_existe"
+        jResp["function"] := cFunc
         oRest:setStatusCode(404)
-        oRest:setResponse('{"error":"funcao_nao_existe","function":"' + cFunc + '"}')
+        oRest:setResponse(jResp:toJson())
         return .T.
     endif
 
@@ -179,7 +199,11 @@ user function tecRunrExec()
         cErr   := oErr:Description
         cStack := oErr:ErrorStack
     endtry
+    // Seconds() zera a meia-noite: chamada que atravessa a virada soma o dia
     nDuration := Seconds() - nStart
+    if nDuration < 0
+        nDuration += 86400
+    endif
 
     jResp := JsonObject():new()
     jResp["function"]  := cFunc
@@ -208,10 +232,18 @@ user function tecRunrExec()
 return .T.
 
 //------------------------------------------------------------------------------
-// Anexa o resumo dos asserts a resposta quando a chamada registrou algum assert.
-// As falhas (`fails`) chegam ao cliente na propria resposta, sem ler console.log.
-// Nome com namespace (ex. tlpp.probat.run) roda varios testes, cada um zerando
-// os contadores: o resumo seria so o do ultimo, entao nao vai.
+/*/{Protheus.doc} tecRunrAsserts
+Anexa o resumo dos asserts a resposta quando a chamada registrou algum assert.
+As falhas (`fails`) chegam ao cliente na propria resposta, sem ler console.log.
+Nome com namespace (ex. tlpp.probat.run) roda varios testes, cada um zerando
+os contadores: o resumo seria so o do ultimo, entao nao vai.
+@type static function
+@author Guilherme Pegoraro
+@since 02/10/2026
+@param jResp, json, resposta em montagem (recebe a chave `asserts`)
+@param cFunc, character, nome da funcao executada
+@return nil
+/*/
 //------------------------------------------------------------------------------
 static function tecRunrAsserts(jResp, cFunc)
     local jSum := nil
@@ -225,7 +257,14 @@ static function tecRunrAsserts(jResp, cFunc)
 return nil
 
 //------------------------------------------------------------------------------
-// Helper: converte qualquer tipo de retorno para string
+/*/{Protheus.doc} tecRunrToStr
+Converte qualquer tipo de retorno para o texto do campo `result`.
+@type user function
+@author Guilherme Pegoraro
+@since 11/05/2026
+@param xVal, variant, valor retornado pela funcao executada
+@return character, ".T."/".F.", numero, DToS, JSON (JsonObject) ou <tipo>
+/*/
 //------------------------------------------------------------------------------
 user function tecRunrToStr(xVal)
     local cType := ValType(xVal)

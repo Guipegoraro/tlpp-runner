@@ -6,12 +6,11 @@
     Logica pura contra um appserver.ini falso em $env:TEMP. Nao precisa de
     AppServer nem Protheus. Roda em CI headless.
 
-    Motivacao: o script edita o appserver.ini do usuario. A versao anterior lia
-    com `-Encoding ASCII` e regravava com ASCIIEncoding - mesmo defeito que
-    destruia senhas no dbaccess.ini (#17). Aqui o dano e menor (os bytes altos
-    costumam estar em COMENTARIOS acentuados, nao em credenciais), mas continua
-    sendo corrupcao silenciosa do arquivo do usuario: o ini de referencia desta
-    maquina tem 16 bytes >0x7F em 4 comentarios.
+    Motivacao: o script edita o appserver.ini do usuario, que costuma ter
+    comentarios acentuados em UTF-8 (o ini de referencia tem 16 bytes >0x7F em
+    4 comentarios). Ler/gravar como ASCII troca cada byte alto por '?' - o mesmo
+    defeito que destroi senhas no dbaccess.ini (#17). Os bytes precisam voltar
+    identicos.
 
     Cenarios:
       B1  bytes >0x7F preservados byte a byte
@@ -21,11 +20,10 @@
       B5  -DryRun nao escreve nada
       B6  backup criado antes de alterar
 
-    Bloco REST completo + update in-place (onda 1 da revisao pre-release): o
-    script anunciava "Ajustar [HTTPREST]" mas NAO tinha codigo de update - com a
-    secao presente e errada (porta divergente, Enable=0) ele terminava em verde
-    sem mudar nada. E a secao que ele CRIAVA era incompleta: sem [HTTPURI]
-    (URL=/rest), [HTTPV11] e [ONSTART] o AppServer nao serve /rest.
+    Bloco REST completo + update in-place: secao presente e errada (porta
+    divergente, Enable=0) e corrigida no lugar, e o "ja configurado" so sai
+    quando o arquivo de fato nao muda. Secao ausente ganha o bloco completo:
+    sem [HTTPURI] (URL=/rest), [HTTPV11] e [ONSTART] o AppServer nao serve /rest.
 
       B7  secao ausente -> cria tambem [HTTPURI]/[HTTPV11]/[ONSTART]/[HTTPJOB]
       B8  porta errada  -> corrigida IN-PLACE, demais chaves preservadas
@@ -39,7 +37,8 @@
 
       B13 RefreshRate=120 existente -> 2 in-place, Jobs preservado, sem duplicar;
           [ONSTART] com outro job alem do HTTPJOB -> mantido, so avisa
-      B14 RefreshRate menor que o alvo -> intocado (escolha do usuario)
+      B14 RefreshRate menor que o alvo -> intocado (escolha do usuario);
+          RefreshRate=0 (nao documentado) -> 2; duas linhas -> vale a primeira
       B15 bloco criado do zero ja vem com RefreshRate=2
 
     Exit 0 se nenhum check reprovar, 1 caso contrario.
@@ -227,6 +226,24 @@ try {
     $md5_14 = (Get-FileHash $ini14 -Algorithm MD5).Hash
     & $script -AppServerIniPath $ini14 -RestPort 8401 -Environment 'DESENVOLVIMENTO' *>&1 | Out-Null
     Assert-True 'B14 RefreshRate=1 intocado (arquivo nao muda)' ($md5_14 -eq (Get-FileHash $ini14 -Algorithm MD5).Hash)
+
+    # --- B14b: RefreshRate=0 (nao documentado) -> 2 ---
+    $ini14b = New-Caso 'refreshzero'
+    New-FakeIni -Path $ini14b -ComHttpRest
+    $t14b0 = $latin1.GetString([System.IO.File]::ReadAllBytes($ini14b)) -replace '(?m)^RefreshRate=2\s*$', 'RefreshRate=0'
+    [System.IO.File]::WriteAllText($ini14b, $t14b0, $latin1)
+    & $script -AppServerIniPath $ini14b -RestPort 8401 -Environment 'DESENVOLVIMENTO' *>&1 | Out-Null
+    $t14b = $latin1.GetString([System.IO.File]::ReadAllBytes($ini14b))
+    Assert-True 'B14b RefreshRate=0 vira 2' ($t14b -match '(?m)^RefreshRate=2\s*$' -and $t14b -notmatch '(?m)^RefreshRate=0\s*$')
+
+    # --- B14c: duas linhas RefreshRate -> a primeira (que o setter reescreve) decide ---
+    $ini14c = New-Caso 'refreshdupla'
+    New-FakeIni -Path $ini14c -ComHttpRest
+    $t14c0 = $latin1.GetString([System.IO.File]::ReadAllBytes($ini14c)) -replace '(?m)^RefreshRate=2\s*$', "RefreshRate=120`r`nRefreshRate=1"
+    [System.IO.File]::WriteAllText($ini14c, $t14c0, $latin1)
+    & $script -AppServerIniPath $ini14c -RestPort 8401 -Environment 'DESENVOLVIMENTO' *>&1 | Out-Null
+    $t14c = $latin1.GetString([System.IO.File]::ReadAllBytes($ini14c))
+    Assert-True 'B14c primeira linha RefreshRate=120 virou 2' ($t14c -notmatch '(?m)^RefreshRate=120\s*$' -and $t14c -match '(?m)^RefreshRate=2\s*$')
 
     # --- B15: bloco criado do zero (B7) ja vem com RefreshRate=2 ---
     Assert-True 'B15 [ONSTART] novo com RefreshRate=2' ($t7 -match '(?m)^RefreshRate=2\s*$')
