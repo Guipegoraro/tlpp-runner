@@ -28,6 +28,13 @@
     Write-IniLines -Path $ini -Lines $linhas
 #>
 
+# Intervalo (s) em que o AppServer confere os jobs do [ONSTART] e relanca os que
+# morreram. Toda compilacao derruba os HTTP servers (BuildKillUsers=1 mata o job
+# HTTP_START), e o REST so volta no proximo ciclo: com 120 a janela medida e de
+# ~92s apos o fim do build, com 10 de ~11s e com 2 de ~5s (o piso e a propria
+# inicializacao do REST). Vale para o template e para o ajuste in-place.
+$script:RestRefreshRate = 2
+
 $script:IniEncoding = [System.Text.Encoding]::GetEncoding(28591)   # Latin1: byte<->char 1:1
 
 function Read-IniLines {
@@ -144,10 +151,9 @@ function Set-IniSectionKeys {
 
 function New-RestSectionLines {
     <# Bloco COMPLETO de secoes que fazem o AppServer servir /rest/*.
-       Fonte unica: o template validado no spike do isolamento (#34) e o que o
-       Set-AppServerRest.ps1 grava quando a secao nao existe - antes o segundo
-       criava so [HTTPREST] com Port/Environment e o servidor nao respondia
-       /rest por falta de [HTTPURI]/[HTTPV11]/[ONSTART].
+       Fonte unica do template: usado pelo New-IsolatedInstance.ps1 (#34) e pelo
+       Set-AppServerRest.ps1 quando a secao nao existe. So [HTTPREST] nao basta:
+       sem [HTTPURI]/[HTTPV11]/[ONSTART] o servidor nao responde /rest.
 
        Devolve um hashtable ordenado secao -> linhas de chave (sem o cabecalho),
        pra quem chama decidir quais secoes adicionar (nunca duplicar uma que ja
@@ -171,7 +177,7 @@ function New-RestSectionLines {
 
     return [ordered]@{
         'HTTPJOB'  = @('Main=HTTP_START', "Environment=$Environment")
-        'ONSTART'  = @('Jobs=HTTPJOB', 'RefreshRate=120')
+        'ONSTART'  = @('Jobs=HTTPJOB', "RefreshRate=$script:RestRefreshRate")
         'HTTPV11'  = @('Enable=1', 'Sockets=HTTPREST')
         'HTTPREST' = $restLines
         'HTTPURI'  = @('URL=/rest', 'PrepareIn=99,01', 'Instances=1,2', 'AllowOrigin=*', 'CORSEnable=1', 'Stateless=1')

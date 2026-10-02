@@ -38,7 +38,7 @@ $TlppRunner.AdvplsPath   = "$env:USERPROFILE\.vscode\extensions\totvs.tds-vscode
 
 # Opcionais (derivados de ProtheusRoot se nao setados):
 # $TlppRunner.Includes = 'D:\Protheus\include'
-# $TlppRunner.BaseUrl  = 'http://localhost:8401/rest'
+# $TlppRunner.BaseUrl  = 'http://127.0.0.1:8401/rest'   # host localhost e normalizado para 127.0.0.1 (evita ~2s de fallback IPv6 por request)
 # $TlppRunner.Server   = 'localhost'
 # $TlppRunner.Port     = 1268
 # $TlppRunner.SqlInstance = 'localhost\PROTHEUS'
@@ -94,7 +94,7 @@ O arquivo sai em `<RootPath>\system\resultsprobat.xml` por default.
 
 Esperado: `[INFO] [SUCCESS] Source ... compiled successfully` e exit 0.
 
-> Observacao: toda compilacao reinicia o HTTP REST do AppServer (37-93s medidos) - nao so as de fonte com `@Get/@Post`. O wrapper aguarda automaticamente, e o build evita compilar fonte que ja esta no RPO com o mesmo conteudo (oraculo RPO #33, fallback cache local).
+> Observacao: toda compilacao derruba o HTTP REST do AppServer - nao so as de fonte com `@Get/@Post` - e ele so volta no proximo ciclo do `[ONSTART] RefreshRate` (~5s depois do build com o `RefreshRate=2` que o setup grava; ate ~2 min com 120). O wrapper aguarda automaticamente, e o build evita compilar fonte que ja esta no RPO com o mesmo conteudo (oraculo RPO #33, fallback cache local).
 
 ## Passo 7: validar com PING
 
@@ -146,7 +146,7 @@ Compilacao e sempre explicita: `/tlpp-build <arquivo>` ou `/tlpp-test` (que comp
 | `Regular functions are not allowed` | Codigo usa `function` sem token de compile | Trocar por `user function` ou `static function` |
 | `Cannot find method TLPP.REST.REST:SetContentType` | Nome de metodo errado | Usar `setKeyHeaderResponse("Content-Type", "...")` |
 | `Incompatible types between D and U` | Tipo estrito do TLPP rejeita `nil as <tipo>` | Remover `as <tipo>` na declaracao |
-| `Connection refused` na primeira chamada apos build | HTTP REST reiniciou | Aguardar 2-3s (wrapper ja tem retry) |
+| `Connection refused` na primeira chamada apos build | HTTP REST derrubado pela compilacao, volta no proximo ciclo do `[ONSTART] RefreshRate` | Nada a fazer: o wrapper aguarda (ate 180s se a porta TCP responde). Com `RefreshRate` alto no ini, rodar `/tlpp-tdd-setup` (doctor) |
 | `PING FAIL 401 Unauthorized` | Credenciais erradas | Conferir `~/.claude/tlpp-tdd/config.ps1` (chaves User+Password) |
 | `PING FAIL 500 Internal Server Error` | Erro de runtime no endpoint | Ler `console.log` do appserver REST |
 | `funcao_nao_existe` no /exec | Fonte nao foi compilado no RPO | Rodar `/tlpp-build` antes |
@@ -155,7 +155,7 @@ Compilacao e sempre explicita: `/tlpp-build <arquivo>` ou `/tlpp-test` (que comp
 
 - **Compile via advpls cli usa o RPO token automaticamente** detectado pelo TDS-VSCode previamente conectado. Se voce nunca conectou pelo TDS-VSCode, pode precisar de uma primeira conexao manual.
 - **Apenas `user function` e `static function`** sao compilaveis sem token JWT do portal TOTVS. `Function` regular (publica) exige token Harpia.
-- **Toda compilacao** reinicia o HTTPREST do AppServer (37-93s medidos, issue #29) - nao so fonte com `@Get/@Post`. Wrapper aguarda; oraculo RPO (#33) + cache local evitam recompilar fonte inalterado.
+- **Toda compilacao** derruba o HTTPREST do AppServer (issue #29) - nao so fonte com `@Get/@Post` - ate o proximo ciclo do `[ONSTART] RefreshRate` (janela ~13s com `RefreshRate=2`, ate ~2 min com 120). Wrapper aguarda; oraculo RPO (#33) + cache local evitam recompilar fonte inalterado.
 - **Mocks (`tec_mk*`)** so interceptam codigo que passa pelos wrappers de `src/tecWrap.tlpp`. Codigo legado que chama `DbSelectArea` direto nao eh mockavel sem refactor.
 
 ## PROBAT vs `/runner/exec` por nome
@@ -187,7 +187,7 @@ Para `type:suite` funcionar, marcar cada teste com `@TestFixture(suite="X")` E u
 ## Fluxo TDD recomendado (rota por funcao - barato em tokens)
 
 1. **Red**: escreve teste em `test/unit/tecXxxTst.tlpp` com `u_tecAssertReset()` + `u_tecAssert*` + `return u_tecAssertsOk()`
-2. `/tlpp-test u_test_xxx_caso1` -> deve retornar `result=.F.` (funcao nao existe ainda)
+2. `/tlpp-test u_test_xxx_caso1` -> vermelho: `ERRO InterFunctionCall: cannot find function U_TECXXX` (funcao nao existe ainda) ou `result=.F.` com linhas `FAIL:`
 3. **Green**: implementa `src/tecXxx.tlpp` com `user function tecXxx(...)` - sempre pelos wrappers de `tecWrap.tlpp`
 4. `/tlpp-test u_test_xxx_caso1` -> compila o que mudou e roda -> `result=.T.` (1 linha, ~0.001s)
 5. **Refactor**: rerodar testes vizinhos via nome pra checar regressao

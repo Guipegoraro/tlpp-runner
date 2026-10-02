@@ -6,18 +6,16 @@
     Logica pura contra um dbaccess.ini falso em $env:TEMP. Nao precisa de
     DBAccess, SQL Server nem AppServer. Roda em CI headless.
 
-    Cobre duas armadilhas que ja quebraram ambiente de dev:
+    Cobre duas armadilhas do dbaccess.ini:
 
       D1  ENCODING. As chaves `password=` guardam senha cifrada pelo dbaccesscfg
-          com bytes >0x7F. A versao anterior lia com `-Encoding ASCII` e
-          regravava com ASCIIEncoding, trocando cada byte alto por '?' - o que
-          destruia a autenticacao de TODOS os aliases ja existentes no arquivo.
-          Encontrado ao rodar a #17 num ini real que tinha 18 desses bytes.
+          com bytes >0x7F. Ler/gravar como ASCII troca cada byte alto por '?' e
+          destroi a autenticacao de TODOS os aliases ja existentes no arquivo
+          (um ini real tem dezenas desses bytes).
 
       D2  CREDENCIAL. Com ConnectionMode=2 o DBAccess IGNORA `user=`/`password=`
-          da secao; quem autentica e o UID=/PWD= dentro da ConnectionString. A
-          versao anterior nao os escrevia, gerando alias que sobe mas nao loga
-          ("Falha de logon do usuario ''").
+          da secao; quem autentica e o UID=/PWD= dentro da ConnectionString. Sem
+          eles o alias sobe mas nao loga ("Falha de logon do usuario ''").
 
     Cenarios:
       A1  bytes >0x7F preservados byte a byte

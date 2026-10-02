@@ -35,11 +35,21 @@ Roteamento: chamar `/runner/exec` direto via `-Quiet` (saida em 1 linha, baixo c
 
 Saida esperada:
 ```
-u_test_xxx: result=.T. dur=0.32s
+u_test_xxx: result=.T. dur=0.32s asserts=3ok/0fail
 ```
 
 `.T.` = todos asserts passaram (usando `u_tecAssert*` + `return u_tecAssertsOk()`).
-`.F.` = ao menos um falhou. Para detalhes, consultar `console.log` (`[ASSERT_FAIL] ...`).
+`.F.` = ao menos um falhou. O motivo vem na propria saida (campo `asserts` da
+resposta do `/runner/exec`): uma linha `FAIL:` por assert falho, com a descricao
+escrita no teste:
+
+```
+u_test_xxx: result=.F. dur=0.002s asserts=1ok/2fail
+  FAIL: soma errada | expected=3 actual=2
+```
+
+Nao precisa abrir o `console.log`; os `[ASSERT_FAIL]` do `ConOut` sao so
+complemento (ex. ver a ordem de execucao).
 
 Quando usar: TDD funcao-a-funcao, validacao rapida apos editar fonte, loop iterativo.
 
@@ -79,9 +89,10 @@ explicitamente - "NAO-EXECUTADO" e um resultado valido; "passou" sem evidencia n
 ## Erros comuns
 
 - **Compile falha (FATAL)**: `function` em vez de `user function`, ou tipo incompativel
-- **Connection refused**: o HTTPREST reinicia a cada compilacao - qualquer fonte, nao so `@Get/@Post` - por 37-93s medidos. O wrapper faz backoff assimetrico e aguarda
+- **Connection refused**: o HTTPREST cai a cada compilacao - qualquer fonte, nao so `@Get/@Post` - e volta no proximo ciclo do `[ONSTART] RefreshRate` (~5s apos o build com `RefreshRate=2`; ate ~2 min num ini com 120 - a skill `tlpp-tdd-setup` em modo doctor baixa o valor). O wrapper faz backoff assimetrico e aguarda
 - **404 funcao_nao_existe**: o fonte nao foi compilado no RPO ainda
-- **500 runtime**: erro de execucao - veja `message` do JSON e `console.log`
+- **500 runtime** (`u_x: ERRO <mensagem>`): erro de execucao na funcao chamada (type mismatch, variavel inexistente...). O runner imprime a mensagem, as primeiras linhas da pilha (fonte e linha) e os `FAIL` registrados ate o erro - va direto a linha indicada
+- **500 generico** `{"code":500,"message":"Internal Server Error"}`: `Break("...")` explicito no codigo chamado, ou erro que derruba a thread (ex.: `Empty()` sobre JsonObject), escapa do tratamento. So nesse caso leia `console.log`/`error.log`
 - **`.T.` sem assertar nada**: a funcao retorna `.T.` mas nao chamou nenhum `u_tecAssert*`. Sem assert, nao ha o que validar - revise o teste
 - **HTTP 0 / advpls nao encontrado**: problema de ambiente, nao de teste. Rode a skill `tlpp-tdd-setup` (modo doctor)
 - **Teste de integracao sem `.tlpp-tdd.json`**: o projeto nao foi inicializado. Rode a skill `tlpp-tdd-project-init`

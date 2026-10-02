@@ -25,9 +25,10 @@
     JUnit XML resultante e mostra resumo passou/falhou.
 
 .PARAMETER Quiet
-    Suprime headers [runner] e JSON expandido. Imprime apenas 1 linha:
-    "<funcao>: result=<.T./.F.> dur=<X>s" - util para LLM consumir
-    minimizando tokens. Falhas ainda sao mostradas com detalhe.
+    Suprime headers [runner] e JSON expandido. Imprime 1 linha
+    "<funcao>: result=<.T./.F.> dur=<X>s [asserts=<N>ok/<M>fail]" mais uma linha
+    "  FAIL: <desc> | <detalhe>" por assert falho - util para LLM consumir
+    minimizando tokens. Erro de execucao sai como "<funcao>: ERRO <msg>" + pilha.
 
 .PARAMETER ProjectRoot
     Override do diretorio do projeto (afeta leitura de .tlpp-tdd.json).
@@ -58,6 +59,7 @@ if ($ProjectRoot) { $TlppProjectRootOverride = (Resolve-Path $ProjectRoot).Path 
 . (Join-Path $PSScriptRoot 'runner.config.ps1')
 . (Join-Path $PSScriptRoot 'InstanceControl.ps1')
 . (Join-Path $PSScriptRoot 'HttpRetry.ps1')
+. (Join-Path $PSScriptRoot 'RunnerOutput.ps1')
 $cfg = $TlppRunner
 
 # Instancia dedicada (#34): sobe on-demand antes de QUALQUER chamada REST.
@@ -73,10 +75,10 @@ $headers = @{
     'Content-Type'  = 'application/json'
 }
 
-# Retry - o HTTPREST cai a CADA compilacao (nao so com @Get/@Post) e a janela
-# medida foi de 68-93s (issue #29). O plano antigo (6 x 3s = 18s) era menor que
-# a janela real, entao desistia antes de o servidor voltar e reportava
-# "connection refused" como se fosse falha definitiva.
+# Retry - o HTTPREST cai a CADA compilacao (nao so com @Get/@Post) e volta no
+# proximo ciclo do [ONSTART] RefreshRate: ~5s com o RefreshRate=2 que o setup
+# grava, ate ~2 min num appserver.ini com RefreshRate=120. O budget longo cobre
+# o pior caso; "connection refused" nessa janela nao e falha definitiva.
 #
 # Backoff ASSIMETRICO: esperar 2 minutos por um AppServer DESLIGADO e so
 # castigo. Entao a espera longa depende do AppServer estar VIVO.
@@ -108,7 +110,7 @@ function Invoke-WithRetry {
     param(
         $Block,
         [int]$DelaySec = 3,
-        [int]$LongWaitSec = 180,   # janela medida varia 37-93s; folga pra maquina mais lenta
+        [int]$LongWaitSec = 180,   # RefreshRate=120 deixa o REST fora ate ~2 min; folga pra maquina lenta
         [int]$ShortWaitSec = 12,   # AppServer morto: reporta rapido
         [string]$ProbeHost,
         [int]$ProbePort
@@ -147,23 +149,6 @@ function Invoke-WithRetry {
     }
 }
 
-function Show-Error {
-    param($Exception)
-    if ($Exception.Response) {
-        try {
-            $reader = New-Object System.IO.StreamReader($Exception.Response.GetResponseStream())
-            $body = $reader.ReadToEnd()
-            $code = [int]$Exception.Response.StatusCode
-            Write-Host "[runner] HTTP $code" -ForegroundColor Red
-            Write-Host $body
-            return $code
-        } catch { return 0 }
-    } else {
-        Write-Host "[runner] $($Exception.Message)" -ForegroundColor Red
-        return 0
-    }
-}
-
 if ($Ping) {
     $url = "$($cfg.BaseUrl)/runner/ping"
     if (-not $Quiet) { Write-Host "[runner] GET $url" -ForegroundColor Cyan }
@@ -173,7 +158,7 @@ if ($Ping) {
         $resp | ConvertTo-Json -Depth 5
         exit 0
     } catch {
-        Show-Error $_.Exception | Out-Null
+        Show-Error $_ | Out-Null
         exit 1
     }
 }
@@ -187,7 +172,7 @@ if ($CheckExists) {
         $resp | ConvertTo-Json -Depth 5
         exit $(if ($resp.exists) { 0 } else { 1 })
     } catch {
-        Show-Error $_.Exception | Out-Null
+        Show-Error $_ | Out-Null
         exit 1
     }
 }
@@ -231,7 +216,9 @@ try {
     if ($Quiet) {
         $dur = [math]::Round([double]$resp.duration, 3)
         $color = if ($resp.result -eq '.T.') { 'Green' } else { 'Red' }
-        Write-Host "$($resp.function): result=$($resp.result) dur=${dur}s" -ForegroundColor $color
+        $sum = if ($resp.asserts) { " asserts=$($resp.asserts.passed)ok/$($resp.asserts.failed)fail" } else { '' }
+        Write-Host "$($resp.function): result=$($resp.result) dur=${dur}s$sum" -ForegroundColor $color
+        Write-AssertFails $resp.asserts
     } else {
         Write-Host "[runner] OK function=$($resp.function) duration=$($resp.duration)s result=$($resp.result)" -ForegroundColor Green
         $resp | ConvertTo-Json -Depth 5
@@ -262,6 +249,6 @@ try {
     }
     exit 0
 } catch {
-    Show-Error $_.Exception | Out-Null
+    Show-Error $_ | Out-Null
     exit 1
 }

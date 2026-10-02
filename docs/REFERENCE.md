@@ -150,13 +150,25 @@ o framework tem contador próprio: cada assert incrementa ok/fail, loga
 `[ASSERT_OK]`/`[ASSERT_FAIL]` no `ConOut`, e `u_tecAssertsOk()` no `return` decide
 o `result` da resposta REST.
 
+A resposta do `/runner/exec` também traz o campo `asserts` = `u_tecAssertSummary()`
+da chamada (`ok`, `passed`, `failed`, `fails[]`), presente quando a chamada
+registrou ao menos um assert — inclusive na resposta 500 `error=runtime`, com as
+falhas registradas até o erro. O `Invoke-TlppRunner.ps1 -Quiet` (rota do
+`/tlpp-test`) imprime o placar e uma linha por falha, então o motivo de um `.F.`
+não exige ler o `console.log`:
+
+```
+u_test_x: result=.F. dur=0.002s asserts=1ok/2fail
+  FAIL: soma errada | expected=3 actual=2
+```
+
 ### Controle
 
 | Função | Comportamento |
 |---|---|
 | `u_tecAssertReset()` | **Obrigatório na primeira linha.** Zera contadores e lista de falhas (são `static` do módulo — sem reset, vazam do teste anterior) |
 | `u_tecAssertsOk()` | **Obrigatório no `return`.** `.T.` só se `falhas == 0` **e** `ok > 0` — teste sem nenhum assert reprova de propósito |
-| `u_tecAssertSummary()` | JsonObject `{ok, passed, failed, fails}` (`fails` = array de `"<desc> \| <detalhe>"`). Útil para inspeção via `/tlpp-exec` |
+| `u_tecAssertSummary()` | JsonObject `{ok, passed, failed, fails}` (`fails` = array de `"<desc> \| <detalhe>"`). É o que o `/runner/exec` devolve no campo `asserts` da resposta |
 
 ### Asserts de valor
 
@@ -200,7 +212,8 @@ Consomem o `jResp` de `u_tecHttpReq` (`{ok, status, body, error}`).
 - No detalhe de uma falha, o valor é formatado por tipo: `<nil>`, `'texto'`,
   `123`, `.T.`, `20260729` (data), `<array len=3>`, `<object>`. JsonObject aparece
   como `<J>` — é por isso que uma falha típica se lê
-  `[ASSERT_FAIL] programs vazio | expected=<empty> actual=<J>`.
+  `FAIL: programs vazio | expected=<empty> actual=<J>` na saída do runner (e
+  `[ASSERT_FAIL] programs vazio | ...` no `ConOut`).
 - **Asserts `u_tecAssert*` não contam como testcase no PROBAT** (ele espera
   `assertEquals` da include). O PROBAT reporta `Test without testcase`. É esperado
   — a rota por função via `/runner/exec` é a que dá `result` confiável.

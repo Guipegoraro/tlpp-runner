@@ -124,7 +124,7 @@ Compila `src/tecAssert.tlpp`, `tecRunrApi.tlpp`, `tecRunrCtx.tlpp`, `tecWrap.tlp
     Password     = '<senha-admin-do-appserver>'
     ProtheusRoot = $protheusRoot
     AdvplsPath   = $advplsPath
-    BaseUrl      = 'http://localhost:8401/rest'
+    BaseUrl      = 'http://127.0.0.1:8401/rest'   # localhost vira 127.0.0.1 ao carregar (evita ~2s de fallback IPv6 por request)
     SqlInstance  = $sqlInstance
     DbAccessPort = 7890
 }

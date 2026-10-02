@@ -15,7 +15,7 @@ Plugin Claude Code que entrega o framework **tlpp-runner** (TDD autonomo para cu
   - `/tlpp-test <funcao|arquivo|suite>` - roda testes
   - `/tlpp-exec <funcao> [args]` - executa user function arbitraria
   - `/tlpp-table create <nome> "<cols>"` - adiciona tabela permanente ao schema de teste
-- **Compilacao explicita** - nenhum hook de build ao salvar. O agente decide quando compilar (`/tlpp-build` / `/tlpp-test`), porque toda escrita no RPO reinicia o HTTPREST por 37-93s.
+- **Compilacao explicita** - nenhum hook de build ao salvar. O agente decide quando compilar (`/tlpp-build` / `/tlpp-test`), porque toda escrita no RPO derruba o HTTPREST ate o proximo ciclo do `[ONSTART] RefreshRate` (~13s de janela com o `RefreshRate=2` que o setup grava; ate ~2 min com 120).
 
 ## Audiencia
 

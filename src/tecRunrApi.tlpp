@@ -10,10 +10,18 @@
 // `<ns>.u_<nome>` em vez do `u_<nome>` global que o /runner/exec espera.
 namespace tec.runner.api
 
+// Os handlers REST retornam .T. mesmo nas respostas de erro: com .F. o tlppCore
+// descarta o corpo montado e devolve um 500 generico ("Internal Server Error").
+// O erro chega ao cliente pelo setStatusCode + corpo JSON.
+
 //------------------------------------------------------------------------------
 /*/{Protheus.doc} tecRunrPing
 Health check do tlpp-runner.
 GET /rest/runner/ping
+@type user function
+@author Guilherme Pegoraro
+@since 09/05/2026
+@return logical, sempre .T. (o resultado vai no corpo: status, env, company, branch, timestamp)
 /*/
 //------------------------------------------------------------------------------
 @Get("/runner/ping")
@@ -35,6 +43,10 @@ return .T.
 /*/{Protheus.doc} tecRunrFunc
 Verifica se uma funcao existe no RPO.
 GET /rest/runner/func?name=u_tecCalcDsc
+@type user function
+@author Guilherme Pegoraro
+@since 09/05/2026
+@return logical, sempre .T. (200 {function, exists} ou 400 name_obrigatorio)
 /*/
 //------------------------------------------------------------------------------
 @Get("/runner/func")
@@ -53,7 +65,7 @@ user function tecRunrFunc()
     if Empty(cName)
         oRest:setStatusCode(400)
         oRest:setResponse('{"error":"name_obrigatorio"}')
-        return .F.
+        return .T.
     endif
 
     jResp["function"] := cName
@@ -67,6 +79,20 @@ return .T.
 /*/{Protheus.doc} tecRunrExec
 Executa funcao TLPP/AdvPL pelo nome.
 POST /rest/runner/exec  body: {"function":"...", "argString":"\"a\",\"b\""}
+
+Resposta 200: {function, argString, result, duration, env, asserts?}
+Resposta 500: {error:"runtime", function, argString, message, stack, duration, asserts?}
+`asserts` (= u_tecAssertSummary(): ok, passed, failed, fails[]) so vem quando a
+chamada registrou ao menos um assert.
+
+Executa a expressao montada com o corpo do request (funcao + argString): e
+execucao remota de codigo por desenho. Exige Basic auth (SECURITY=1) e existe
+so para AppServer local de desenvolvimento - nunca habilitar em ambiente de
+cliente.
+@type user function
+@author Guilherme Pegoraro
+@since 09/05/2026
+@return logical, sempre .T. (o status HTTP e o corpo carregam o resultado)
 /*/
 //------------------------------------------------------------------------------
 @Post("/runner/exec")
@@ -77,9 +103,12 @@ user function tecRunrExec()
     local cArgs     := ""
     local cCallStr  := ""
     local cErr      := ""
+    local cStack    := ""
     local nStart    := 0
     local nDuration := 0
     local xResult   := nil
+    local lErro     := .F.
+    local oErr      := nil
 
     oRest:setKeyHeaderResponse("Content-Type", "application/json")
 
@@ -95,7 +124,7 @@ user function tecRunrExec()
     if Empty(cBody)
         oRest:setStatusCode(400)
         oRest:setResponse('{"error":"body_vazio"}')
-        return .F.
+        return .T.
     endif
 
     jReq := JsonObject():new()
@@ -103,7 +132,7 @@ user function tecRunrExec()
     if !Empty(cErr)
         oRest:setStatusCode(400)
         oRest:setResponse('{"error":"json_invalido"}')
-        return .F.
+        return .T.
     endif
 
     if jReq:hasProperty("function")
@@ -112,7 +141,7 @@ user function tecRunrExec()
     if Empty(cFunc)
         oRest:setStatusCode(400)
         oRest:setResponse('{"error":"function_obrigatoria"}')
-        return .F.
+        return .T.
     endif
 
     if jReq:hasProperty("argString")
@@ -135,46 +164,107 @@ user function tecRunrExec()
     endif
 
     if !tlpp.ffunc(cFunc)
+        jResp := JsonObject():new()
+        jResp["error"]    := "funcao_nao_existe"
+        jResp["function"] := cFunc
         oRest:setStatusCode(404)
-        oRest:setResponse('{"error":"funcao_nao_existe","function":"' + cFunc + '"}')
-        return .F.
+        oRest:setResponse(jResp:toJson())
+        return .T.
     endif
 
     cCallStr := cFunc + "(" + cArgs + ")"
-    nStart   := Seconds()
 
-    BEGIN SEQUENCE
-        xResult := tlpp.call(cCallStr)
-    RECOVER USING cErr
-        // Erro na funcao chamada pode ter deixado modo teste ligado
-        u_tecTstStop()
-        nDuration := Seconds() - nStart
-        oRest:setStatusCode(500)
-        jResp := JsonObject():new()
-        jResp["error"]     := "runtime"
-        jResp["function"]  := cFunc
-        jResp["argString"] := cArgs
-        jResp["message"]   := cErr
-        jResp["duration"]  := nDuration
-        oRest:setResponse(jResp:toJson())
-        return .F.
-    END SEQUENCE
+    // Contadores de assert sao static por thread: zerados aqui, o resumo da
+    // resposta reflete so esta chamada.
+    u_tecAssertReset()
+    nStart := Seconds()
 
+    // Erro de execucao na funcao chamada (tipo invalido, variavel inexistente...)
+    // cai no catch com descricao e pilha. Precisa ser try/catch: com ErrorBlock +
+    // BEGIN SEQUENCE o bloco de erro roda, mas o Break disparado dentro da chamada
+    // por macro/tlpp.call nao chega ao RECOVER daqui - a chamada voltaria como
+    // sucesso com retorno vazio.
+    // Funcao sem namespace vai por macro, que preserva na pilha a linha do fonte
+    // chamado; o tlpp.call relanca o erro e a pilha comeca nele. Nome longo
+    // (namespace, ex. tlpp.probat.run) a macro nao resolve: so pelo tlpp.call.
+    // Break(<texto>) explicito escapa do catch e sai como 500 generico do tlppCore.
+    try
+        if "." $ cFunc
+            xResult := tlpp.call(cCallStr)
+        else
+            xResult := &(cCallStr)
+        endif
+    catch oErr
+        lErro  := .T.
+        cErr   := oErr:Description
+        cStack := oErr:ErrorStack
+    endtry
+    // Seconds() zera a meia-noite: chamada que atravessa a virada soma o dia
     nDuration := Seconds() - nStart
+    if nDuration < 0
+        nDuration += 86400
+    endif
 
     jResp := JsonObject():new()
     jResp["function"]  := cFunc
     jResp["argString"] := cArgs
+
+    if lErro
+        // Erro na funcao chamada pode ter deixado modo teste ligado
+        u_tecTstStop()
+        jResp["error"]    := "runtime"
+        jResp["message"]  := cErr
+        jResp["stack"]    := cStack
+        jResp["duration"] := nDuration
+        tecRunrAsserts(jResp, cFunc)
+        oRest:setStatusCode(500)
+        oRest:setResponse(jResp:toJson())
+        return .T.
+    endif
+
     jResp["result"]    := u_tecRunrToStr(xResult)
     jResp["duration"]  := nDuration
     jResp["env"]       := GetEnvServer()
+    tecRunrAsserts(jResp, cFunc)
 
     oRest:setStatusCode(200)
     oRest:setResponse(jResp:toJson())
 return .T.
 
 //------------------------------------------------------------------------------
-// Helper: converte qualquer tipo de retorno para string
+/*/{Protheus.doc} tecRunrAsserts
+Anexa o resumo dos asserts a resposta quando a chamada registrou algum assert.
+As falhas (`fails`) chegam ao cliente na propria resposta, sem ler console.log.
+Nome com namespace (ex. tlpp.probat.run) roda varios testes, cada um zerando
+os contadores: o resumo seria so o do ultimo, entao nao vai.
+@type static function
+@author Guilherme Pegoraro
+@since 02/10/2026
+@param jResp, json, resposta em montagem (recebe a chave `asserts`)
+@param cFunc, character, nome da funcao executada
+@return nil
+/*/
+//------------------------------------------------------------------------------
+static function tecRunrAsserts(jResp, cFunc)
+    local jSum := nil
+    if "." $ cFunc
+        return nil
+    endif
+    jSum := u_tecAssertSummary()
+    if jSum["passed"] + jSum["failed"] > 0
+        jResp["asserts"] := jSum
+    endif
+return nil
+
+//------------------------------------------------------------------------------
+/*/{Protheus.doc} tecRunrToStr
+Converte qualquer tipo de retorno para o texto do campo `result`.
+@type user function
+@author Guilherme Pegoraro
+@since 11/05/2026
+@param xVal, variant, valor retornado pela funcao executada
+@return character, ".T."/".F.", numero, DToS, JSON (JsonObject) ou <tipo>
+/*/
 //------------------------------------------------------------------------------
 user function tecRunrToStr(xVal)
     local cType := ValType(xVal)
@@ -186,5 +276,6 @@ user function tecRunrToStr(xVal)
         case cType == "D" ; return DToS(xVal)
         case cType == "A" ; return "<array len=" + cValToChar(Len(xVal)) + ">"
         case cType == "O" ; return "<object>"
+        case cType == "J" ; return xVal:toJson()
     endcase
 return "<" + cType + ">"

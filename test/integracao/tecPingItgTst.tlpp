@@ -10,7 +10,7 @@ using namespace tlpp.probat
 // Serve de template para testar OUTROS endpoints REST do projeto.
 //
 // PRE-REQUISITOS:
-//   - AppServer REST rodando em http://localhost:8401
+//   - AppServer REST rodando em http://127.0.0.1:8401
 //   - test/integracao/tecRunrCfg.tlpp criado (gitignored)
 //     com u_tecRunrCfgUser/Pwd/BaseUrl
 //------------------------------------------------------------------------------

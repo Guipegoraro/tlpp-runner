@@ -24,12 +24,28 @@
       R12 isolation + baseUrl expl. -> baseUrl explicito vence o derivado
       R13 isolation sem ProtheusRoot-> portas/environment derivam, paths ficam vazios
 
+    BaseUrl com host localhost (fallback IPv6 custa ~2s por request):
+
+      R14 config global com localhost  -> normalizado para 127.0.0.1
+      R15 baseUrl do json com localhost -> normalizado (porta e path intactos)
+      R16 host que so comeca com "localhost" -> intocado
+      R17 https://localhost -> intocado (certificado emitido para o nome)
+      R18 http://user@localhost -> host trocado, credencial preservada
+
+    Saida do /runner/exec (runner/RunnerOutput.ps1):
+
+      O1  500 error=runtime -> "<fn>: ERRO <msg>", pilha e FAILs, devolve 500
+      O2  corpo que nao e JSON -> impresso como veio
+      O3  excecao sem Response (conexao) -> so a mensagem, devolve 0
+      O4  fails com 1 elemento (ConvertFrom-Json desenrola) -> 1 linha FAIL
+      O5  404 com JSON que nao e runtime -> corpo impresso como veio
+
     Sandbox: USERPROFILE temporario (sem config global) + copia do
     runner.config.ps1 (sem runner.config.local.ps1 legacy do repo por perto).
 
     Classificacao de erro de conexao (runner/HttpRetry.ps1) - o backoff
-    assimetrico do Invoke-TlppRunner depende dela e estava MORTO em PS 5.1 pt-BR
-    (casava so a mensagem, que e localizada):
+    assimetrico do Invoke-TlppRunner depende dela, e a mensagem da excecao e
+    localizada (PS 5.1 pt-BR nao diz "refused"):
 
       C1  WebException ConnectFailure com mensagem pt-BR -> transiente
       C2  WebException ProtocolError (HTTP 404/500)      -> NAO transiente
@@ -165,7 +181,7 @@ try {
     # R9 - isolation deriva tudo
     $proj = New-Proj 'iso' '{ "name": "ISOPROJ", "isolation": { "tcpPort": 1271, "restPort": 8404, "webAppPort": 8101 } }'
     $cfg = Invoke-Cascade $runnerDir $proj
-    Assert-Equal 'R9 BaseUrl na porta REST da instancia' 'http://localhost:8404/rest' $cfg.BaseUrl
+    Assert-Equal 'R9 BaseUrl na porta REST da instancia' 'http://127.0.0.1:8404/rest' $cfg.BaseUrl
     Assert-Equal 'R9 Port = porta TCP da instancia'      1271 $cfg.Port
     Assert-Equal 'R9 Environment = nome em maiusculas'   'ISOPROJ' $cfg.Environment
     Assert-Equal 'R9 IsolationBinDir'  (Join-Path $fakeProt 'Protheus\bin\appserver_isoproj') $cfg.IsolationBinDir
@@ -178,7 +194,7 @@ try {
     # R10 - projeto SEM isolation nao muda nada (regressao: o gatilho e a chave)
     $proj = New-Proj 'semiso' '{ "name": "SEMISO" }'
     $cfg = Invoke-Cascade $runnerDir $proj
-    Assert-Equal 'R10 sem isolation: BaseUrl default'      'http://localhost:8401/rest' $cfg.BaseUrl
+    Assert-Equal 'R10 sem isolation: BaseUrl default'      'http://127.0.0.1:8401/rest' $cfg.BaseUrl
     Assert-Equal 'R10 sem isolation: Port default'         1268 $cfg.Port
     Assert-Equal 'R10 sem isolation: Environment default'  'DESENVOLVIMENTO' $cfg.Environment
     Assert-Equal 'R10 sem isolation: IsolationBinDir vazio' '' $cfg.IsolationBinDir
@@ -189,7 +205,7 @@ try {
     $proj = New-Proj 'isosemnome' '{ "isolation": { "tcpPort": 1271, "restPort": 8404, "webAppPort": 8101 } }'
     $cfg = Invoke-Cascade $runnerDir $proj
     Assert-Equal 'R11 isolation sem name -> Port default'          1268 $cfg.Port
-    Assert-Equal 'R11 isolation sem name -> BaseUrl default'       'http://localhost:8401/rest' $cfg.BaseUrl
+    Assert-Equal 'R11 isolation sem name -> BaseUrl default'       'http://127.0.0.1:8401/rest' $cfg.BaseUrl
     Assert-Equal 'R11 isolation sem name -> IsolationBinDir vazio' '' $cfg.IsolationBinDir
 
     # R12 - baseUrl explicito no MESMO json vence o derivado do isolamento
@@ -206,6 +222,34 @@ try {
     Assert-Equal 'R13 sem ProtheusRoot: Environment derivado' 'ISOC' $cfg.Environment
     Assert-Equal 'R13 sem ProtheusRoot: IsolationBinDir vazio' '' $cfg.IsolationBinDir
     Assert-Equal 'R13 sem ProtheusRoot: RpoCustom vazio'       '' $cfg.RpoCustom
+
+    # ===== BaseUrl localhost -> 127.0.0.1 =====
+    # R14 - config global gravada com localhost
+    Set-GlobalCfg "`$TlppRunner.BaseUrl = 'http://localhost:8401/rest'"
+    $proj = New-Proj 'normglobal' '{ "name": "NORMG" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R14 global localhost -> 127.0.0.1' 'http://127.0.0.1:8401/rest' $cfg.BaseUrl
+
+    # R15 - baseUrl explicito do json com localhost
+    Set-GlobalCfg $null
+    $proj = New-Proj 'normjson' '{ "name": "NORMJ", "baseUrl": "http://localhost:9001/rest" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R15 json localhost -> 127.0.0.1' 'http://127.0.0.1:9001/rest' $cfg.BaseUrl
+
+    # R16 - so o host exato e trocado
+    $proj = New-Proj 'normhost' '{ "name": "NORMH", "baseUrl": "http://localhost-dev:9002/rest" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R16 host localhost-dev intocado' 'http://localhost-dev:9002/rest' $cfg.BaseUrl
+
+    # R17 - https fica com localhost (certificado emitido para o nome)
+    $proj = New-Proj 'normhttps' '{ "name": "NORMS", "baseUrl": "https://localhost:9003/rest" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R17 https localhost intocado' 'https://localhost:9003/rest' $cfg.BaseUrl
+
+    # R18 - credencial na URL nao impede a troca do host
+    $proj = New-Proj 'normuser' '{ "name": "NORMU", "baseUrl": "http://admin@localhost:9004/rest" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R18 user@localhost -> user@127.0.0.1' 'http://admin@127.0.0.1:9004/rest' $cfg.BaseUrl
 
     # ===== Classificacao de erro de conexao (backoff do Invoke-TlppRunner) =====
     . (Join-Path $root 'runner\HttpRetry.ps1')
@@ -273,12 +317,48 @@ try {
     $erro = Test-Wcfg @{ ProtheusRoot='C:\TOTVS\Protheus_x'; SqlInstance=$null }
     Assert-Equal 'W4 chave opcional nula segue tolerada' $null $erro
 
-    # W5 - regressao do parse: `.Add('{0}={1}' -f $k, $v)` sem parenteses extras
-    # fazia a virgula virar separador de argumento e o script explodia em toda
-    # chamada com valor real. Aqui basta uma chave sair no conteudo gerado.
+    # W5 - `.Add('{0}={1}' -f $k, $v)` precisa de parenteses extras: sem eles a
+    # virgula vira separador de argumento e o script explode em toda chamada com
+    # valor real. Aqui basta uma chave sair no conteudo gerado.
     $saidaW = (& $wcfg -Settings @{ ProtheusRoot='C:\TOTVS\Protheus_x' } -DryRun *>&1 | Out-String)
     Assert-Equal 'W5 gera linha do TlppRunner sem erro de formatacao' $true `
         ($saidaW -match [regex]::Escape("`$TlppRunner.ProtheusRoot = 'C:\TOTVS\Protheus_x'"))
+
+    # ===== Saida do /runner/exec (runner/RunnerOutput.ps1) =====
+    . (Join-Path $root 'runner\RunnerOutput.ps1')
+    # Excecao com Response, como a do Invoke-RestMethod em erro HTTP. O corpo vai
+    # no ErrorDetails do ErrorRecord, que e onde o PowerShell 7 o entrega.
+    function New-HttpErrorRecord([int]$Status, [string]$Body) {
+        $ex = [System.Exception]::new("Response status code does not indicate success: $Status")
+        $ex | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = $Status })
+        $er = [System.Management.Automation.ErrorRecord]::new($ex, 'HttpError', 'NotSpecified', $null)
+        if ($Body) { $er.ErrorDetails = [System.Management.Automation.ErrorDetails]::new($Body) }
+        return $er
+    }
+    function Get-HostText([scriptblock]$Bloco) { return (& $Bloco 6>&1 | Out-String) }
+
+    $corpo1 = '{"error":"runtime","function":"u_x","message":"type mismatch on +","stack":"linha1\nlinha2","asserts":{"passed":1,"failed":1,"fails":["soma | expected=3 actual=2"]}}'
+    $er1 = New-HttpErrorRecord 500 $corpo1
+    $txt1 = Get-HostText { $null = Show-Error $er1 }
+    Assert-Equal 'O1 runtime: linha ERRO com a mensagem' $true ($txt1 -match 'u_x: ERRO type mismatch on \+')
+    Assert-Equal 'O1 runtime: pilha impressa'           $true ($txt1 -match '(?m)^\s+linha1' -and $txt1 -match '(?m)^\s+linha2')
+    Assert-Equal 'O1 runtime: FAIL impresso'            $true ($txt1 -match 'FAIL: soma \| expected=3 actual=2')
+    Assert-Equal 'O1 runtime: devolve o status'         500   ((Show-Error $er1) 6>$null)
+
+    $txt2 = Get-HostText { $null = Show-Error (New-HttpErrorRecord 500 'Internal Server Error (texto)') }
+    Assert-Equal 'O2 corpo nao-JSON impresso como veio' $true ($txt2 -match [regex]::Escape('Internal Server Error (texto)'))
+
+    $er3 = [System.Management.Automation.ErrorRecord]::new([System.Exception]::new('conexao recusada'), 'Conn', 'NotSpecified', $null)
+    $txt3 = Get-HostText { $null = Show-Error $er3 }
+    Assert-Equal 'O3 sem Response: so a mensagem' $true ($txt3 -match 'conexao recusada' -and $txt3 -notmatch 'HTTP')
+    Assert-Equal 'O3 sem Response: devolve 0'     0     ((Show-Error $er3) 6>$null)
+
+    $resp4 = '{"asserts":{"fails":["unico | detalhe"]}}' | ConvertFrom-Json
+    $txt4 = Get-HostText { Write-AssertFails $resp4.asserts }
+    Assert-Equal 'O4 fails de 1 elemento -> 1 linha FAIL' 1 ([regex]::Matches($txt4, 'FAIL: unico \| detalhe')).Count
+
+    $txt5 = Get-HostText { $null = Show-Error (New-HttpErrorRecord 404 '{"error":"funcao_nao_existe","function":"u_y"}') }
+    Assert-Equal 'O5 404 nao-runtime: corpo impresso' $true ($txt5 -match 'funcao_nao_existe' -and $txt5 -cnotmatch 'ERRO ')
 
 } catch {
     # Erro terminante nao pode virar "tudo OK" com fail=0 - falso-verde.

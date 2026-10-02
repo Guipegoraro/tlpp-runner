@@ -273,14 +273,15 @@ For each case, in sequence:
 & "$runner\Invoke-TlppRunner.ps1" -Function u_test_tec<Nome>_<caso> -Quiet
 ```
 
-Expected outcome at this stage: `result=.F.`. Three possible deviations and how to handle:
+Expected outcome at this stage: one of the two healthy reds below. How to read each outcome:
 
 | Outcome at red                                | Diagnosis                                    | Action                                                |
 |-----------------------------------------------|----------------------------------------------|-------------------------------------------------------|
-| `result=.F.`, fails for the right reason       | Healthy red                                 | Proceed                                               |
+| `u_test_x: ERRO InterFunctionCall: cannot find function U_TEC<NOME>` | Healthy red: the target function does not exist yet | Proceed |
+| `result=.F.` with `FAIL:` lines naming the expected behavior | Healthy red: the function exists but does not do this yet | Proceed |
 | `result=.T.` (passes immediately)              | You're testing existing behavior, or the assertion is tautological | Fix the test — make it actually assert something the target function doesn't do yet |
 | Compile fails (`[FATAL]` in log)               | Test syntax error                            | Fix the test, recompile (`& "$runner\Invoke-TlppBuild.ps1" -File <arquivo>`), re-run. Do NOT keep going with a broken test |
-| `EXC` (runtime exception in test before asserts) | Mock setup wrong, or `u_tecAssertReset` missing | Fix the test, re-run                                  |
+| Any other `ERRO` whose stack points at the test or at a mock (`u_tecMk*`, `u_tecTstStart`) | Mock setup wrong, or the test itself is broken | Fix the test, re-run |
 
 **Do not proceed to green until every test has been observed to fail for the right reason.** Otherwise you risk a green that's an artifact of a broken test rather than a working implementation.
 
@@ -301,13 +302,13 @@ Implement `src/tec<Nome>.tlpp` with the minimal code that passes all the cases. 
 
 Then re-run every case. For each `.F.` or `EXC`:
 
-1. Read `[ASSERT_FAIL]` in `console.log` (path comes from `runner.config.ps1` / local override):
-   ```powershell
-   . "$runner\runner.config.ps1"
-   Get-Content $TlppRunner.ConsoleLogPath -Tail 30 | Select-String 'ASSERT_FAIL'
+1. Read the `FAIL:` lines in the runner output. `/runner/exec` returns the assert summary (`asserts` field), and `-Quiet` prints the score plus one line per failed assert — no need to open `console.log`:
    ```
-2. If REST crashed (compiling `@Get/@Post` restarts HTTPREST): wait for `Get-NetTCPConnection -State Listen -LocalPort 8401` before retrying
-3. Runtime error: read function+line from the `Stack:` log. **Fix the source, never the test.** The test is the spec.
+   u_test_x: result=.F. dur=0.002s asserts=1ok/2fail
+     FAIL: soma errada | expected=3 actual=2
+   ```
+2. `connection refused` right after a build: every compilation (any source, not only `@Get/@Post`) takes HTTPREST down until the next `[ONSTART] RefreshRate` cycle (~5s after the build with `RefreshRate=2`). The runner already waits; do not retry by hand
+3. Runtime error (`u_x: ERRO <message>`, HTTP 500 `error=runtime`): the runner prints the first stack lines with source and line, plus the `FAIL`s recorded before the error. **Fix the source, never the test.** The test is the spec. Only a generic `{"code":500,"message":"Internal Server Error"}` (explicit `Break()` in the called code, or an error that kills the thread such as `Empty()` on a JsonObject) needs `console.log`/`error.log`.
 4. Iterate until all `.T.`
 
 ### Bounded repair loop (do not infinite-edit)

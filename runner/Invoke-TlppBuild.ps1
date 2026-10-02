@@ -32,8 +32,9 @@
     este conteudo. Use quando desconfiar que o cache esta mentindo.
 
 .NOTES
-    CACHE DE BUILD (issue #29): qualquer compilacao derruba o HTTPREST por
-    68-93s medidos - e `recompile=F` nao evita, o advpls compila do mesmo jeito.
+    CACHE DE BUILD (issue #29): qualquer compilacao derruba o HTTPREST ate o
+    proximo ciclo do [ONSTART] RefreshRate (~5s com RefreshRate=2, ate ~2 min
+    com 120) - e `recompile=F` nao evita, o advpls compila do mesmo jeito.
     Por isso fontes ja compilados com o mesmo conteudo sao PULADOS: se todos
     forem pulados, o advpls nao roda e nao ha janela de indisponibilidade.
     Detalhes da invalidacao em runner/BuildCache.ps1.
@@ -125,7 +126,7 @@ if ($files.Count -eq 0) {
 }
 
 # --- Cache: descarta fontes ja no RPO com este conteudo (issues #29 e #33) ---
-# Compilar custa 68-93s de HTTPREST fora do ar, entao pular tem valor alto.
+# Compilar derruba o HTTPREST ate o proximo ciclo do [ONSTART] RefreshRate, entao pular tem valor.
 $skipped = @()
 if (-not $Force) {
     $keep = @()
@@ -306,5 +307,12 @@ if ($code -eq 0) {
     Write-Host "[build] OK" -ForegroundColor Green
 } else {
     Write-Host "[build] FAIL (exit $code) - veja log completo em $logPath" -ForegroundColor Red
+    # RPO aberto por outro AppServer: so um processo por vez escreve no custom.rpo.
+    # Quando a falha vem por aqui, o AppServer alvo ja derrubou os HTTP servers no
+    # inicio do build e nao os religa: o REST fica fora ate reiniciar o AppServer.
+    if (($output | Out-String) -match 'COMPILEERROR-300|Failed to open repository') {
+        Write-Host "[build] o RPO esta aberto por OUTRO AppServer (mesmo custom.rpo). Feche o outro AppServer" -ForegroundColor Yellow
+        Write-Host "[build] e reinicie este ($($cfg.Server):$($cfg.Port)): o REST dele so volta apos o restart." -ForegroundColor Yellow
+    }
 }
 exit $code
