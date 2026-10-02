@@ -187,7 +187,7 @@ Para `type:suite` funcionar, marcar cada teste com `@TestFixture(suite="X")` E u
 ## Fluxo TDD recomendado (rota por funcao - barato em tokens)
 
 1. **Red**: escreve teste em `test/unit/tecXxxTst.tlpp` com `u_tecAssertReset()` + `u_tecAssert*` + `return u_tecAssertsOk()`
-2. `/tlpp-test u_test_xxx_caso1` -> deve retornar `result=.F.` (funcao nao existe ainda)
+2. `/tlpp-test u_test_xxx_caso1` -> vermelho: `ERRO InterFunctionCall: cannot find function U_TECXXX` (funcao nao existe ainda) ou `result=.F.` com linhas `FAIL:`
 3. **Green**: implementa `src/tecXxx.tlpp` com `user function tecXxx(...)` - sempre pelos wrappers de `tecWrap.tlpp`
 4. `/tlpp-test u_test_xxx_caso1` -> compila o que mudou e roda -> `result=.T.` (1 linha, ~0.001s)
 5. **Refactor**: rerodar testes vizinhos via nome pra checar regressao

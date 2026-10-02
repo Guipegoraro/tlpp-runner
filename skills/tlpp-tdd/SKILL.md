@@ -273,14 +273,15 @@ For each case, in sequence:
 & "$runner\Invoke-TlppRunner.ps1" -Function u_test_tec<Nome>_<caso> -Quiet
 ```
 
-Expected outcome at this stage: `result=.F.`. Three possible deviations and how to handle:
+Expected outcome at this stage: one of the two healthy reds below. How to read each outcome:
 
 | Outcome at red                                | Diagnosis                                    | Action                                                |
 |-----------------------------------------------|----------------------------------------------|-------------------------------------------------------|
-| `result=.F.`, fails for the right reason       | Healthy red                                 | Proceed                                               |
+| `u_test_x: ERRO InterFunctionCall: cannot find function U_TEC<NOME>` | Healthy red: the target function does not exist yet | Proceed |
+| `result=.F.` with `FAIL:` lines naming the expected behavior | Healthy red: the function exists but does not do this yet | Proceed |
 | `result=.T.` (passes immediately)              | You're testing existing behavior, or the assertion is tautological | Fix the test — make it actually assert something the target function doesn't do yet |
 | Compile fails (`[FATAL]` in log)               | Test syntax error                            | Fix the test, recompile (`& "$runner\Invoke-TlppBuild.ps1" -File <arquivo>`), re-run. Do NOT keep going with a broken test |
-| `EXC` (runtime exception in test before asserts) | Mock setup wrong, or `u_tecAssertReset` missing | Fix the test, re-run                                  |
+| Any other `ERRO` whose stack points at the test or at a mock (`u_tecMk*`, `u_tecTstStart`) | Mock setup wrong, or the test itself is broken | Fix the test, re-run |
 
 **Do not proceed to green until every test has been observed to fail for the right reason.** Otherwise you risk a green that's an artifact of a broken test rather than a working implementation.
 

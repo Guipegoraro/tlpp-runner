@@ -25,9 +25,10 @@
     JUnit XML resultante e mostra resumo passou/falhou.
 
 .PARAMETER Quiet
-    Suprime headers [runner] e JSON expandido. Imprime apenas 1 linha:
-    "<funcao>: result=<.T./.F.> dur=<X>s" - util para LLM consumir
-    minimizando tokens. Falhas ainda sao mostradas com detalhe.
+    Suprime headers [runner] e JSON expandido. Imprime 1 linha
+    "<funcao>: result=<.T./.F.> dur=<X>s [asserts=<N>ok/<M>fail]" mais uma linha
+    "  FAIL: <desc> | <detalhe>" por assert falho - util para LLM consumir
+    minimizando tokens. Erro de execucao sai como "<funcao>: ERRO <msg>" + pilha.
 
 .PARAMETER ProjectRoot
     Override do diretorio do projeto (afeta leitura de .tlpp-tdd.json).

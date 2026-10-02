@@ -224,7 +224,8 @@ $smokeFunc = 'u_tecSmkProjInit'
 $runner = if ($env:CLAUDE_PLUGIN_ROOT) { "$env:CLAUDE_PLUGIN_ROOT\runner" } else { "$PLUGIN_ROOT\runner" }
 & "$runner\Invoke-TlppRunner.ps1" -Function $smokeFunc -ProjectRoot $projectRoot -Quiet
 # Deve mostrar: u_tecSmkProjInit: result=.T. dur=Xs
-# Se result=.F., olhar console.log do AppServer (linhas [smk-proj-init])
+# Se result=.F., as linhas FAIL: dizem qual passo falhou (alias, TCLink, tabela, INSERT/SELECT);
+# o console.log do AppServer (linhas [smk-proj-init]) traz o detalhe de cada passo
 ```
 
 ### 8. CLAUDE.md do projeto (contexto passivo — nao pule)

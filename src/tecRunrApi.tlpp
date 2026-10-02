@@ -160,9 +160,10 @@ user function tecRunrExec()
     nStart := Seconds()
 
     // Erro de execucao na funcao chamada (tipo invalido, variavel inexistente...)
-    // cai no catch com descricao e pilha. Precisa ser try/catch: dentro do REST o
-    // tlppCore intercepta o Break, e um ErrorBlock + BEGIN SEQUENCE nunca chega
-    // ao RECOVER - a chamada voltaria como sucesso com retorno vazio.
+    // cai no catch com descricao e pilha. Precisa ser try/catch: com ErrorBlock +
+    // BEGIN SEQUENCE o bloco de erro roda, mas o Break disparado dentro da chamada
+    // por macro/tlpp.call nao chega ao RECOVER daqui - a chamada voltaria como
+    // sucesso com retorno vazio.
     // Funcao sem namespace vai por macro, que preserva na pilha a linha do fonte
     // chamado; o tlpp.call relanca o erro e a pilha comeca nele. Nome longo
     // (namespace, ex. tlpp.probat.run) a macro nao resolve: so pelo tlpp.call.
@@ -191,7 +192,7 @@ user function tecRunrExec()
         jResp["message"]  := cErr
         jResp["stack"]    := cStack
         jResp["duration"] := nDuration
-        tecRunrAsserts(jResp)
+        tecRunrAsserts(jResp, cFunc)
         oRest:setStatusCode(500)
         oRest:setResponse(jResp:toJson())
         return .T.
@@ -200,7 +201,7 @@ user function tecRunrExec()
     jResp["result"]    := u_tecRunrToStr(xResult)
     jResp["duration"]  := nDuration
     jResp["env"]       := GetEnvServer()
-    tecRunrAsserts(jResp)
+    tecRunrAsserts(jResp, cFunc)
 
     oRest:setStatusCode(200)
     oRest:setResponse(jResp:toJson())
@@ -209,9 +210,15 @@ return .T.
 //------------------------------------------------------------------------------
 // Anexa o resumo dos asserts a resposta quando a chamada registrou algum assert.
 // As falhas (`fails`) chegam ao cliente na propria resposta, sem ler console.log.
+// Nome com namespace (ex. tlpp.probat.run) roda varios testes, cada um zerando
+// os contadores: o resumo seria so o do ultimo, entao nao vai.
 //------------------------------------------------------------------------------
-static function tecRunrAsserts(jResp)
-    local jSum := u_tecAssertSummary()
+static function tecRunrAsserts(jResp, cFunc)
+    local jSum := nil
+    if "." $ cFunc
+        return nil
+    endif
+    jSum := u_tecAssertSummary()
     if jSum["passed"] + jSum["failed"] > 0
         jResp["asserts"] := jSum
     endif

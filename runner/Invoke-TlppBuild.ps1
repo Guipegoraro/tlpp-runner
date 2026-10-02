@@ -126,7 +126,7 @@ if ($files.Count -eq 0) {
 }
 
 # --- Cache: descarta fontes ja no RPO com este conteudo (issues #29 e #33) ---
-# Compilar custa 68-93s de HTTPREST fora do ar, entao pular tem valor alto.
+# Compilar derruba o HTTPREST ate o proximo ciclo do [ONSTART] RefreshRate, entao pular tem valor.
 $skipped = @()
 if (-not $Force) {
     $keep = @()

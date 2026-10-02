@@ -81,7 +81,7 @@ try {
 - BROKEN: HTTP 0 / connection refused -> AppServer nao esta rodando. Instrucoes pro user iniciar manualmente (path em `$gcfg.AppServerIniPath` se setado).
 - BROKEN: HTTP 401/403 -> senha errada. Re-pergunta admin password.
 - BROKEN: HTTP 404 ou outro -> `[HTTPREST]` nao configurado no `.ini`. Roda `Set-AppServerRest.ps1`.
-- OK, mas `[ONSTART] RefreshRate` acima de 2 no `appserver.ini` (`$gcfg.AppServerIniPath`) -> roda `Set-AppServerRest.ps1 -DryRun` e depois sem `-DryRun`: ele baixa o valor in-place. Com 120 o REST fica ~2 min fora depois de cada compilacao; com 2, ~5s. Pede restart do AppServer.
+- OK, mas `[ONSTART] RefreshRate` acima de 2 no `appserver.ini` (`$gcfg.AppServerIniPath`) -> roda `Set-AppServerRest.ps1 -DryRun` e depois sem `-DryRun`: ele baixa o valor in-place. Com 120 o REST fica ~2 min fora depois de cada compilacao; com 2, ~5s. Pede restart do AppServer. Vale tambem para o `appserver.ini` de cada instancia isolada (`<ProtheusRoot>\Protheus\bin\appserver_<nome>\`). Se o `[ONSTART]` roda outro job alem do `HTTPJOB`, o script mantem o valor e so avisa: a chave vale para todos os jobs da secao, e a decisao e do usuario.
 
 **7. Framework compilado no RPO**
 ```powershell

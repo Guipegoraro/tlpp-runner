@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Isolamento opt-in: projeto que quer compilar sem derrubar o HTTPREST dos
-    outros (issue #29 - qualquer compilacao reinicia o REST por 37-93s) ganha
+    outros (issue #29 - qualquer compilacao derruba o REST ate o proximo ciclo do RefreshRate) ganha
     a sua propria instancia:
 
       <ProtheusRoot>\Protheus\bin\appserver_<nome>\   (copia de appserver_rest)

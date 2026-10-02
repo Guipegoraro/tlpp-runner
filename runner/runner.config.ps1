@@ -180,7 +180,8 @@ if ($projIsolation) {
 # primeiro e o AppServer escuta so em IPv4: cada request paga ~2s de fallback
 # (medido: /runner/exec em ~2s com localhost, ~10ms com 127.0.0.1). Normaliza
 # aqui para valer tambem para config global e .tlpp-tdd.json ja gravados.
-$script:TlppRunner.BaseUrl = $script:TlppRunner.BaseUrl -replace '^(https?://)localhost(?=[:/]|$)', '${1}127.0.0.1'
+# So http: em https o certificado e emitido para "localhost" e nao valida 127.0.0.1.
+$script:TlppRunner.BaseUrl = $script:TlppRunner.BaseUrl -replace '^(http://)localhost(?=[:/]|$)', '${1}127.0.0.1'
 
 if (-not $script:TlppRunner.Includes -and $script:TlppRunner.ProtheusRoot) {
     $script:TlppRunner.Includes = Join-Path $script:TlppRunner.ProtheusRoot 'Protheus\include'

@@ -34,7 +34,8 @@ Tudo roda no AppServer dev existente (env DESENVOLVIMENTO, porta 8401).
          u_tecTstStop()
      return u_tecAssertsOk()
 
-2. /tlpp-test u_test_<o_que_testa>  -> result=.F. (fonte ainda nao existe)
+2. /tlpp-test u_test_<o_que_testa>  -> ERRO InterFunctionCall: cannot find function
+   U_TEC<NOME> (fonte ainda nao existe) ou result=.F. com linhas FAIL:
 
 3. Green: implementa src/tec<Nome>.tlpp com user function. Compile
    explicitamente via /tlpp-build (o /tlpp-test ja compila antes de rodar).

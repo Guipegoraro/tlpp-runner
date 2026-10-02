@@ -100,18 +100,30 @@ if ($needsHttpRest) {
 
 # 1b) [ONSTART] RefreshRate - o REST so volta depois de uma compilacao no proximo
 # ciclo de verificacao dos jobs (ver $script:RestRefreshRate em IniIO.ps1). Baixa
-# o valor quando esta acima do alvo ou ausente; valor menor do usuario fica.
+# o valor quando esta acima do alvo ou ausente (default do AppServer: 60s); valor
+# menor do usuario fica. A chave vale para TODOS os jobs da secao e o AppServer
+# relanca a cada ciclo o job que terminou: com outro job em `Jobs=` o ajuste nao
+# e feito, so avisado - decidir a frequencia daquele job e do usuario.
 $refreshAtual = $null
+$onJobs = @()
 $onBounds = Get-IniSectionBounds -Lines $content -Section 'ONSTART'
 if ($onBounds) {
     foreach ($l in $content[$onBounds.Start..$onBounds.End]) {
         if ($l -match '^\s*RefreshRate\s*=\s*(\d+)') { $refreshAtual = [int]$matches[1] }
+        if ($l -match '^\s*Jobs\s*=\s*(.*)$') { $onJobs = @($matches[1] -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
     }
 }
-$ajustaRefresh = $onBounds -and ($null -eq $refreshAtual -or $refreshAtual -gt $script:RestRefreshRate)
+$refreshAlto   = $onBounds -and ($null -eq $refreshAtual -or $refreshAtual -gt $script:RestRefreshRate)
+$outrosJobs    = @($onJobs | Where-Object { $_ -ne 'HTTPJOB' })
+$ajustaRefresh = $refreshAlto -and $outrosJobs.Count -eq 0
 if ($ajustaRefresh) {
     $de = if ($null -eq $refreshAtual) { 'ausente' } else { "$refreshAtual" }
     $plannedChanges += "[ONSTART] RefreshRate $de -> $script:RestRefreshRate (o REST volta ~5s apos cada compilacao em vez de esperar o ciclo inteiro)"
+} elseif ($refreshAlto) {
+    $de = if ($null -eq $refreshAtual) { 'ausente (60s)' } else { "$refreshAtual" }
+    Write-Host ("[appsrv-rest] aviso: [ONSTART] RefreshRate=$de mantido porque a secao tambem roda " +
+                ($outrosJobs -join ', ') + ". O REST fica fora ate um ciclo inteiro depois de cada compilacao;" +
+                " baixar para $script:RestRefreshRate faria esses jobs serem relancados nesse intervalo.") -ForegroundColor Yellow
 }
 
 # 2) Secao [GENERAL] - ConsoleLog (so adiciona se nao existe)

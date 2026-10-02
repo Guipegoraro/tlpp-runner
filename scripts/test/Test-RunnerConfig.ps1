@@ -29,6 +29,7 @@
       R14 config global com localhost  -> normalizado para 127.0.0.1
       R15 baseUrl do json com localhost -> normalizado (porta e path intactos)
       R16 host que so comeca com "localhost" -> intocado
+      R17 https://localhost -> intocado (certificado emitido para o nome)
 
     Sandbox: USERPROFILE temporario (sem config global) + copia do
     runner.config.ps1 (sem runner.config.local.ps1 legacy do repo por perto).
@@ -230,6 +231,11 @@ try {
     $proj = New-Proj 'normhost' '{ "name": "NORMH", "baseUrl": "http://localhost-dev:9002/rest" }'
     $cfg = Invoke-Cascade $runnerDir $proj
     Assert-Equal 'R16 host localhost-dev intocado' 'http://localhost-dev:9002/rest' $cfg.BaseUrl
+
+    # R17 - https fica com localhost (certificado emitido para o nome)
+    $proj = New-Proj 'normhttps' '{ "name": "NORMS", "baseUrl": "https://localhost:9003/rest" }'
+    $cfg = Invoke-Cascade $runnerDir $proj
+    Assert-Equal 'R17 https localhost intocado' 'https://localhost:9003/rest' $cfg.BaseUrl
 
     # ===== Classificacao de erro de conexao (backoff do Invoke-TlppRunner) =====
     . (Join-Path $root 'runner\HttpRetry.ps1')

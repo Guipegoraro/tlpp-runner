@@ -4,7 +4,7 @@
     mesmo conteudo.
 
 .DESCRIPTION
-    Motivacao (issue #29): QUALQUER compilacao derruba o HTTPREST por 68-93s
+    Motivacao (issue #29): QUALQUER compilacao derruba o HTTPREST ate o proximo ciclo do [ONSTART] RefreshRate (~5s com 2, ate ~2 min com 120)
     medidos - nao so as que tocam @Get/@Post. E `recompile=F` nao ajuda: o
     advpls compila do mesmo jeito. A unica forma de evitar a janela e nao
     invocar o advpls.

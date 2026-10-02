@@ -37,7 +37,8 @@
     [ONSTART] RefreshRate - o REST volta depois de cada compilacao no proximo
     ciclo de verificacao dos jobs; com 120 a janela passa de 1 minuto:
 
-      B13 RefreshRate=120 existente -> 2 in-place, Jobs preservado, sem duplicar
+      B13 RefreshRate=120 existente -> 2 in-place, Jobs preservado, sem duplicar;
+          [ONSTART] com outro job alem do HTTPJOB -> mantido, so avisa
       B14 RefreshRate menor que o alvo -> intocado (escolha do usuario)
       B15 bloco criado do zero ja vem com RefreshRate=2
 
@@ -206,8 +207,17 @@ try {
     Assert-True 'B13 RefreshRate=120 removido'    ($t13 -notmatch '(?m)^RefreshRate=120\s*$')
     Assert-True 'B13 uma unica chave RefreshRate' ((([regex]::Matches($t13, '(?m)^RefreshRate=')).Count) -eq 1)
     Assert-True 'B13 Jobs=HTTPJOB preservado'     ($t13 -match '(?m)^Jobs=HTTPJOB\s*$')
-    # B11 roda sobre [ONSTART] do usuario com RefreshRate=60: tambem e baixado
-    Assert-True 'B13 RefreshRate=60 do usuario baixado' ($t11 -match '(?m)^RefreshRate=2\s*$' -and $t11 -notmatch '(?m)^RefreshRate=60\s*$')
+    # B11 roda sobre [ONSTART] do usuario com Jobs=MEUJOB e RefreshRate=60: outro
+    # job na secao -> RefreshRate mantido (a chave vale pra todos os jobs)
+    Assert-True 'B13 [ONSTART] com outro job: RefreshRate=60 mantido' ($t11 -match '(?m)^RefreshRate=60\s*$' -and $t11 -notmatch '(?m)^RefreshRate=2\s*$')
+    $ini13b = New-Caso 'refreshoutrojob'
+    New-FakeIni -Path $ini13b -ComHttpRest
+    $t13b0 = $latin1.GetString([System.IO.File]::ReadAllBytes($ini13b)) -replace '(?m)^Jobs=HTTPJOB\s*$', 'Jobs=HTTPJOB,JOB_INTEGRA' -replace '(?m)^RefreshRate=2\s*$', 'RefreshRate=120'
+    [System.IO.File]::WriteAllText($ini13b, $t13b0, $latin1)
+    $md5_13b = (Get-FileHash $ini13b -Algorithm MD5).Hash
+    $saida13b = (& $script -AppServerIniPath $ini13b -RestPort 8401 -Environment 'DESENVOLVIMENTO' *>&1 | Out-String)
+    Assert-True 'B13 Jobs=HTTPJOB,JOB_INTEGRA: arquivo nao muda'   ($md5_13b -eq (Get-FileHash $ini13b -Algorithm MD5).Hash)
+    Assert-True 'B13 Jobs=HTTPJOB,JOB_INTEGRA: avisa citando o job' ($saida13b -match 'aviso' -and $saida13b -match 'JOB_INTEGRA')
 
     # --- B14: RefreshRate menor que o alvo fica ---
     $ini14 = New-Caso 'refreshbaixo'
